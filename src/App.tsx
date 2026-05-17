@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   BadgeCheck,
   CircleDollarSign,
+  Clock3,
+  Crown,
   Eye,
   Gamepad2,
   Loader2,
@@ -11,6 +13,8 @@ import {
   RefreshCw,
   Shield,
   TimerReset,
+  Trophy,
+  Users,
   Wallet,
 } from "lucide-react";
 import {
@@ -125,6 +129,31 @@ function gamePriority(game: Game) {
   return 5;
 }
 
+function formatTimer(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
+}
+
+function CardBack({ label }: { label: string }) {
+  return (
+    <div className="playing-card hidden" aria-label={label}>
+      <div className="card-back-pattern" />
+      <Shield size={24} />
+    </div>
+  );
+}
+
+function CardFace({ card }: { card: DisplayCard }) {
+  return (
+    <div className={`playing-card ${card.color}`}>
+      <span>{card.rank}</span>
+      <strong>{card.suit}</strong>
+      <span>{card.rank}</span>
+    </div>
+  );
+}
+
 export default function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<bigint | null>(null);
@@ -182,6 +211,32 @@ export default function App() {
       : 0n;
   const deadlineSeconds = Number(selectedGame?.deadline ?? 0n);
   const secondsLeft = deadlineSeconds > 0 ? Math.max(deadlineSeconds - nowSeconds, 0) : 0;
+  const topSeat = playerSeat === 1 ? 0 : 1;
+  const topSeatAddress = selectedGame
+    ? topSeat === 0
+      ? selectedGame.playerOne
+      : selectedGame.playerTwo
+    : undefined;
+  const topSeatHasCards = selectedGame
+    ? topSeat === 0
+      ? selectedGame.playerOneHandDealt
+      : selectedGame.playerTwoHandDealt
+    : false;
+  const topSeatActive = selectedGame?.status === 2 && selectedGame.turn === topSeat;
+  const bottomSeatActive = selectedGame?.status === 2 && playerSeat !== null && selectedGame.turn === playerSeat;
+  const bottomSeatNumber = playerSeat === null ? null : playerSeat + 1;
+  const playerHasCards = Boolean(playerHandDealt || selectedGame?.handCount === 2);
+  const tablePrompt = (() => {
+    if (!selectedGame) return "Choose a table";
+    if (selectedGame.status === 1) return "Waiting for seat 2";
+    if (selectedGame.status === 2 && selectedGame.handCount === 0) return "Ready to deal";
+    if (selectedGame.status === 2 && playerSeat === selectedGame.turn) return "Your turn";
+    if (selectedGame.status === 2) return `Seat ${selectedGame.turn + 1} to act`;
+    if (selectedGame.status === 3) return "Reveal winner";
+    if (selectedGame.status === 4) return "Finished";
+    if (selectedGame.status === 5) return "Cancelled";
+    return statusLabel;
+  })();
 
   const notify = useCallback((next: Toast) => {
     setToast(next);
@@ -823,36 +878,75 @@ export default function App() {
 
         <section className="table-stage">
           <div className="table-surface">
-            <div className="opponent-seat seat">
-              <span>Seat 2</span>
-              <strong>{shortAddress(selectedGame?.playerTwo)}</strong>
+            <div className={`opponent-seat seat ${topSeatActive ? "active-seat" : ""}`}>
+              <div>
+                <span>Seat {topSeat + 1}</span>
+                <strong>{shortAddress(topSeatAddress)}</strong>
+              </div>
+              {selectedGame?.winner === topSeatAddress && selectedGame?.winner !== zeroAddress && (
+                <Crown size={18} />
+              )}
+            </div>
+
+            <div className="opponent-cards card-row" aria-label="Opponent hand">
+              {topSeatHasCards ? (
+                <>
+                  <CardBack label="Opponent hidden card one" />
+                  <CardBack label="Opponent hidden card two" />
+                </>
+              ) : (
+                <>
+                  <div className="card-slot" />
+                  <div className="card-slot" />
+                </>
+              )}
             </div>
 
             <div className="pot-core">
+              <div className="chip-stack" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
               <span className="eyebrow">Pot</span>
               <strong>{selectedGame ? `${formatEther(selectedGame.pot)} ETH` : "0 ETH"}</strong>
               <div className={`status-chip status-${statusLabel.toLowerCase()}`}>{statusLabel}</div>
             </div>
 
-            <div className="hand-zone" aria-label="Private hand">
-              {(hand ?? [null, null]).map((card, index) => (
-                <div className={`playing-card ${card?.color ?? "hidden"}`} key={index}>
-                  {card ? (
-                    <>
-                      <span>{card.rank}</span>
-                      <strong>{card.suit}</strong>
-                      <span>{card.rank}</span>
-                    </>
-                  ) : (
-                    <Shield size={28} />
-                  )}
-                </div>
-              ))}
+            <div className="table-message">
+              <span>{tablePrompt}</span>
+              {Boolean(selectedGame?.deadline && selectedGame.deadline > 0n) && (
+                <strong>
+                  <Clock3 size={15} />
+                  {formatTimer(secondsLeft)}
+                </strong>
+              )}
             </div>
 
-            <div className="player-seat seat">
-              <span>{playerSeat === null ? "Spectator" : `Seat ${playerSeat + 1}`}</span>
-              <strong>{shortAddress(address)}</strong>
+            <div className="hand-zone card-row" aria-label="Private hand">
+              {hand ? (
+                hand.map((card, index) => <CardFace card={card} key={`${card.rank}-${card.suit}-${index}`} />)
+              ) : playerHasCards ? (
+                <>
+                  <CardBack label="Private hidden card one" />
+                  <CardBack label="Private hidden card two" />
+                </>
+              ) : (
+                <>
+                  <div className="card-slot" />
+                  <div className="card-slot" />
+                </>
+              )}
+            </div>
+
+            <div className={`player-seat seat ${bottomSeatActive ? "active-seat" : ""}`}>
+              <div>
+                <span>{bottomSeatNumber === null ? "Spectator" : `Seat ${bottomSeatNumber}`}</span>
+                <strong>{shortAddress(address)}</strong>
+              </div>
+              {selectedGame?.winner === address && selectedGame?.winner !== zeroAddress && (
+                <Crown size={18} />
+              )}
             </div>
           </div>
 
@@ -910,6 +1004,13 @@ export default function App() {
 
           <dl className="stats-list">
             <div>
+              <dt>Players</dt>
+              <dd>
+                <Users size={15} />
+                {selectedGame?.playerTwo && selectedGame.playerTwo !== zeroAddress ? "2/2" : "1/2"}
+              </dd>
+            </div>
+            <div>
               <dt>Table</dt>
               <dd>{selectedGame ? `#${selectedGame.id.toString()}` : "None"}</dd>
             </div>
@@ -947,7 +1048,16 @@ export default function App() {
             </div>
             <div>
               <dt>Winner</dt>
-              <dd>{selectedGame?.winner && selectedGame.winner !== zeroAddress ? shortAddress(selectedGame.winner) : "Encrypted"}</dd>
+              <dd>
+                {selectedGame?.winner && selectedGame.winner !== zeroAddress ? (
+                  <>
+                    <Trophy size={15} />
+                    {shortAddress(selectedGame.winner)}
+                  </>
+                ) : (
+                  "Encrypted"
+                )}
+              </dd>
             </div>
           </dl>
 
