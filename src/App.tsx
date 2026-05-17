@@ -116,6 +116,15 @@ function parseEthInput(value: string) {
   }
 }
 
+function gamePriority(game: Game) {
+  if (game.status === 1) return 0;
+  if (game.status === 2) return 1;
+  if (game.status === 3) return 2;
+  if (game.status === 4) return 3;
+  if (game.status === 5) return 4;
+  return 5;
+}
+
 export default function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<bigint | null>(null);
@@ -317,11 +326,11 @@ export default function App() {
     return { ...clients, ...cofhe };
   }, [ensureWallet]);
 
-  const refreshGames = useCallback(async (preferredGameId?: bigint) => {
+  const refreshGames = useCallback(async (preferredGameId?: bigint, silent = false) => {
     if (!isContractReady || !contractAddress) return;
 
     try {
-      setBusy("Refreshing tables");
+      if (!silent) setBusy("Refreshing tables");
       const nextId = (await publicClient.readContract({
         address: contractAddress,
         abi: darkGameAbi,
@@ -343,20 +352,26 @@ export default function App() {
         )
       );
 
-      setGames(loaded);
+      const sorted = [...loaded].sort((left, right) => {
+        const priorityDelta = gamePriority(left) - gamePriority(right);
+        if (priorityDelta !== 0) return priorityDelta;
+        return Number(right.id - left.id);
+      });
+
+      setGames(sorted);
       setSelectedGameId((current) => {
-        if (preferredGameId && loaded.some((game) => game.id === preferredGameId)) {
+        if (preferredGameId && sorted.some((game) => game.id === preferredGameId)) {
           return preferredGameId;
         }
-        if (current && loaded.some((game) => game.id === current)) {
+        if (current && sorted.some((game) => game.id === current)) {
           return current;
         }
-        return loaded[0]?.id ?? null;
+        return sorted[0]?.id ?? null;
       });
     } catch (error) {
       notify({ tone: "error", text: error instanceof Error ? error.message : "Unable to refresh tables." });
     } finally {
-      setBusy(null);
+      if (!silent) setBusy(null);
     }
   }, [isContractReady, notify]);
 
@@ -399,6 +414,14 @@ export default function App() {
   }, [refreshGames]);
 
   useEffect(() => {
+    const poll = window.setInterval(() => {
+      void refreshGames(undefined, true);
+    }, 15000);
+
+    return () => window.clearInterval(poll);
+  }, [refreshGames]);
+
+  useEffect(() => {
     void refreshWalletState();
   }, [refreshWalletState]);
 
@@ -430,6 +453,10 @@ export default function App() {
       notify({ tone: "error", text: "Enter a valid buy-in amount." });
       return;
     }
+    const expectedGameId =
+      games.length > 0
+        ? games.reduce((highest, game) => (game.id > highest ? game.id : highest), 0n) + 1n
+        : undefined;
 
     await runTx("Create table", (clients) =>
       clients.walletClient.writeContract({
@@ -441,6 +468,8 @@ export default function App() {
         account: clients.account,
         chain: requiredChain,
       })
+      ,
+      expectedGameId
     );
   }
 
