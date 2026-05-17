@@ -458,17 +458,18 @@ export default function App() {
         ? games.reduce((highest, game) => (game.id > highest ? game.id : highest), 0n) + 1n
         : undefined;
 
-    await runTx("Create table", (clients) =>
-      clients.walletClient.writeContract({
-        address: clients.contractAddress,
-        abi: darkGameAbi,
-        functionName: "createGame",
-        args: [value],
-        value,
-        account: clients.account,
-        chain: requiredChain,
-      })
-      ,
+    await runTx(
+      "Create table",
+      (clients) =>
+        clients.walletClient.writeContract({
+          address: clients.contractAddress,
+          abi: darkGameAbi,
+          functionName: "createGame",
+          args: [value],
+          value,
+          account: clients.account,
+          chain: requiredChain,
+        }),
       expectedGameId
     );
   }
