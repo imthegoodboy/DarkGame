@@ -733,7 +733,7 @@ export default function App() {
               <span className="eyebrow">Lobby</span>
               <h2>Tables</h2>
             </div>
-            <button className="icon-button" type="button" onClick={refreshGames} title="Refresh tables">
+            <button className="icon-button" type="button" onClick={() => refreshGames()} title="Refresh tables">
               <RefreshCw size={17} />
             </button>
           </div>
