@@ -108,11 +108,19 @@ function isUsableAddress(value?: Address) {
   return Boolean(value && value !== zeroAddress);
 }
 
+function parseEthInput(value: string) {
+  try {
+    return parseEther(value || "0");
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<bigint | null>(null);
-  const [buyIn, setBuyIn] = useState("0.01");
-  const [actionStake, setActionStake] = useState("0.001");
+  const [buyIn, setBuyIn] = useState("0.0005");
+  const [actionStake, setActionStake] = useState("0.0001");
   const [joinId, setJoinId] = useState("");
   const [hand, setHand] = useState<DisplayCard[] | null>(null);
   const [score, setScore] = useState<bigint | null>(null);
@@ -309,7 +317,7 @@ export default function App() {
     return { ...clients, ...cofhe };
   }, [ensureWallet]);
 
-  const refreshGames = useCallback(async () => {
+  const refreshGames = useCallback(async (preferredGameId?: bigint) => {
     if (!isContractReady || !contractAddress) return;
 
     try {
@@ -336,7 +344,15 @@ export default function App() {
       );
 
       setGames(loaded);
-      setSelectedGameId((current) => current ?? loaded[0]?.id ?? null);
+      setSelectedGameId((current) => {
+        if (preferredGameId && loaded.some((game) => game.id === preferredGameId)) {
+          return preferredGameId;
+        }
+        if (current && loaded.some((game) => game.id === current)) {
+          return current;
+        }
+        return loaded[0]?.id ?? null;
+      });
     } catch (error) {
       notify({ tone: "error", text: error instanceof Error ? error.message : "Unable to refresh tables." });
     } finally {
@@ -386,16 +402,20 @@ export default function App() {
     void refreshWalletState();
   }, [refreshWalletState]);
 
-  async function runTx(label: string, tx: () => Promise<`0x${string}`>) {
-    const clients = await ensureWallet();
+  async function runTx(
+    label: string,
+    tx: (clients: Awaited<ReturnType<typeof ensureWallet>>) => Promise<`0x${string}`>,
+    preferredGameId?: bigint
+  ) {
     setBusy(label);
     try {
-      const hash = await tx();
+      const clients = await ensureWallet();
+      const hash = await tx(clients);
       await clients.publicClient.waitForTransactionReceipt({ hash });
       notify({ tone: "success", text: `${label} confirmed.` });
       setHand(null);
       setScore(null);
-      await refreshGames();
+      await refreshGames(preferredGameId);
       await refreshWalletState();
     } catch (error) {
       notify({ tone: "error", text: error instanceof Error ? error.message : `${label} failed.` });
@@ -405,9 +425,13 @@ export default function App() {
   }
 
   async function createGame() {
-    const clients = await ensureWallet();
-    const value = parseEther(buyIn || "0");
-    await runTx("Create table", () =>
+    const value = parseEthInput(buyIn);
+    if (value === null || value <= 0n) {
+      notify({ tone: "error", text: "Enter a valid buy-in amount." });
+      return;
+    }
+
+    await runTx("Create table", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -421,11 +445,23 @@ export default function App() {
   }
 
   async function joinGame(id = joinId) {
-    const clients = await ensureWallet();
-    const game = games.find((item) => item.id === BigInt(id));
-    if (!game) throw new Error("Load the table before joining.");
+    const normalizedId = id.trim();
+    if (!normalizedId || !/^\d+$/.test(normalizedId)) {
+      notify({ tone: "error", text: "Select or enter a table ID first." });
+      return;
+    }
 
-    await runTx("Join table", () =>
+    const game = games.find((item) => item.id === BigInt(normalizedId));
+    if (!game) {
+      notify({ tone: "error", text: "Load the table before joining." });
+      return;
+    }
+    if (game.status !== 1) {
+      notify({ tone: "error", text: "That table is not open for joining." });
+      return;
+    }
+
+    await runTx("Join table", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -434,21 +470,28 @@ export default function App() {
         value: game.buyIn,
         account: clients.account,
         chain: requiredChain,
-      })
+      }),
+      game.id
     );
   }
 
   async function sendAction(action: number) {
     if (!selectedGame) return;
-    const clients = await ensureWallet();
-    const value =
-      action === 1 ? parseEther(actionStake || "0") : action === 2 ? owedToCall : 0n;
-
-    if (action === 2 && owedToCall === 0n) {
-      throw new Error("There is no open bet to call.");
+    const betValue = parseEthInput(actionStake);
+    if (action === 1 && (betValue === null || betValue <= 0n)) {
+      notify({ tone: "error", text: "Enter a valid bet amount." });
+      return;
     }
 
-    await runTx(actionLabels[action], () =>
+    const value =
+      action === 1 ? betValue ?? 0n : action === 2 ? owedToCall : 0n;
+
+    if (action === 2 && owedToCall === 0n) {
+      notify({ tone: "error", text: "There is no open bet to call." });
+      return;
+    }
+
+    await runTx(actionLabels[action], (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -457,14 +500,14 @@ export default function App() {
         value,
         account: clients.account,
         chain: requiredChain,
-      })
+      }),
+      selectedGame.id
     );
   }
 
   async function dealHand() {
     if (!selectedGame) return;
-    const clients = await ensureWallet();
-    await runTx("Deal cards", () =>
+    await runTx("Deal cards", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -472,14 +515,14 @@ export default function App() {
         args: [selectedGame.id],
         account: clients.account,
         chain: requiredChain,
-      })
+      }),
+      selectedGame.id
     );
   }
 
   async function cancelTable() {
     if (!selectedGame) return;
-    const clients = await ensureWallet();
-    await runTx("Cancel table", () =>
+    await runTx("Cancel table", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -487,14 +530,14 @@ export default function App() {
         args: [selectedGame.id],
         account: clients.account,
         chain: requiredChain,
-      })
+      }),
+      selectedGame.id
     );
   }
 
   async function claimTimeout() {
     if (!selectedGame) return;
-    const clients = await ensureWallet();
-    await runTx("Claim timeout", () =>
+    await runTx("Claim timeout", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -502,13 +545,13 @@ export default function App() {
         args: [selectedGame.id],
         account: clients.account,
         chain: requiredChain,
-      })
+      }),
+      selectedGame.id
     );
   }
 
   async function withdrawPayout() {
-    const clients = await ensureWallet();
-    await runTx("Withdraw", () =>
+    await runTx("Withdraw", (clients) =>
       clients.walletClient.writeContract({
         address: clients.contractAddress,
         abi: darkGameAbi,
@@ -591,6 +634,7 @@ export default function App() {
       await clients.publicClient.waitForTransactionReceipt({ hash });
       notify({ tone: "success", text: "Winner settled on-chain." });
       await refreshGames();
+      await refreshWalletState();
     } catch (error) {
       notify({ tone: "error", text: error instanceof Error ? error.message : "Unable to settle winner." });
     } finally {
@@ -730,13 +774,17 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     setSelectedGameId(game.id);
+                    setJoinId(game.status === 1 ? game.id.toString() : "");
                     setHand(null);
                     setScore(null);
                   }}
                 >
                   <span>#{game.id.toString()}</span>
                   <strong>{statusLabels[game.status]}</strong>
-                  <small>{formatEther(game.buyIn)} ETH</small>
+                  <small>
+                    {formatEther(game.buyIn)} ETH
+                    {game.status === 1 ? " · click then Join" : ""}
+                  </small>
                 </button>
               ))
             )}
