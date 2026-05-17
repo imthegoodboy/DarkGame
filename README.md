@@ -1,5 +1,76 @@
 # DarkGame
 
+## Current Production MVP
+
+DarkGame now includes a working CoFHE-powered MVP:
+
+- Solidity contract at `contracts/DarkGame.sol`
+- React/Vite frontend in `src/`
+- Hardhat deploy script in `scripts/deploy.ts`
+- CoFHE unit tests in `test/DarkGame.test.ts`
+- Sepolia deployment metadata in `deployments/11155111.json`
+- Product roadmap in `docs/ROADMAP.md`
+
+The deployed Sepolia contract is:
+
+```text
+0x518159f7B270792fFF3D3a0361C55766c80Dc308
+```
+
+The deployed frontend is:
+
+```text
+https://darkgame-six.vercel.app
+```
+
+Sepolia end-to-end smoke test:
+
+```text
+Create table #2: 0x6d2fe29f0d8f0aa8a426d3e020836b90bf84f00cacb1cf7484db99ae18f322b3
+Join table #2: 0x82ed3313f4de8c6a00f97b5f0869bfd303e689827daf5d11c981827f6627ea65
+Deal encrypted cards: 0x4ecafc4b80348a76679ce6cf10db2a8fad448e3aea2d14bddb3ae92a1b986575
+Alice check: 0x0198ab277fd246dd9af6da87db6d3370cd8ccd57be02e6f6f2827f792df287ef
+Bob check: 0x229f4c04f15c6c63aec3efc4c10aff9643f592d1514dfb04e753325d0e9e6922
+Settle winner: 0x0a4e56e7f06ea087d3df27646f605797d68a4bbfd78bae8f066e1f5606b38508
+Withdraw payout: 0x2315b1fdc5dbd2c469cf249e74d11ebdfd1af8f705adda57f38e082245f95b86
+Final status: Finished
+Final pot: 0 ETH
+```
+
+### Verified Flow
+
+The current app supports:
+
+1. Connect an injected wallet.
+2. Create a buy-in table.
+3. Join a table from a second wallet.
+4. Deal contract-owned no-duplicate card handles.
+5. Decrypt only your own private hand through the permit flow.
+6. Submit actions: check, bet, call, or fold.
+7. Compute an encrypted winner on-chain.
+8. Reveal only the winner code with `decryptForTx`.
+9. Verify the threshold decrypt proof on-chain with `FHE.verifyDecryptResult`.
+10. Settle the pot on-chain and withdraw through pull payments.
+
+### Run Locally
+
+```bash
+npm install
+npm run verify:app
+npm run dev
+```
+
+For Sepolia, create a local env file using `.env.example` and set:
+
+```bash
+VITE_DARKGAME_ADDRESS=0x518159f7B270792fFF3D3a0361C55766c80Dc308
+VITE_DEFAULT_CHAIN_ID=11155111
+```
+
+### Production Hardening Note
+
+The current build removes the previous player-selected hand path. Cards are now dealt by the contract as no-duplicate encrypted handles, betting is exact-value enforced, stale games can be timed out, and payouts use pull withdrawals. For high-value real-money play, the remaining hardening step is replacing block-entropy dealing with a VRF-backed or FHE-native encrypted shuffle so validators cannot influence card entropy.
+
 DarkGame is the project I am building for the Fhenix Privacy-by-Design Buildathon. It is a privacy-first on-chain game where hidden information stays encrypted during gameplay instead of being exposed on a public blockchain.
 
 The first version of DarkGame is an encrypted 2-player poker game. Each player connects a wallet, joins a table, receives private cards, sees only their own hand, makes moves from the frontend, and lets the smart contract evaluate the result without revealing secret information to everyone else on-chain.
@@ -241,7 +312,7 @@ The chain remains the source of truth for trust-sensitive state. The database ex
 I am designing DarkGame around the following stack:
 
 - Frontend: Next.js, React, TypeScript
-- Wallet and chain interaction: wagmi, viem
+- Wallet and chain interaction: viem
 - Privacy tooling: Fhenix CoFHE SDK and React hooks
 - Smart contracts: Solidity
 - Contract development: Hardhat
