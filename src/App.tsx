@@ -448,18 +448,21 @@ export default function App() {
       setPendingWithdrawal(pending);
 
       if (selectedGame && playerSeat !== null) {
-        const nextPlayerState = (await publicClient.readContract({
-          address: contractAddress,
-          abi: darkGameAbi,
-          functionName: "getPlayerState",
-          args: [selectedGame.id, address],
-        })) as PlayerState;
-        setPlayerState(nextPlayerState);
+        try {
+          const nextPlayerState = (await publicClient.readContract({
+            address: contractAddress,
+            abi: darkGameAbi,
+            functionName: "getPlayerState",
+            args: [selectedGame.id, address],
+          })) as PlayerState;
+          setPlayerState(nextPlayerState);
+        } catch {
+          setPlayerState(null);
+        }
       } else {
         setPlayerState(null);
       }
     } catch {
-      setPlayerState(null);
       setPendingWithdrawal(0n);
     }
   }, [address, isContractReady, playerSeat, selectedGame]);
