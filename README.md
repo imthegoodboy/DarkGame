@@ -518,27 +518,7 @@ Possible next directions:
 
 So while poker is the entry point, the larger vision is encrypted gaming infrastructure.
 
-## Roadmap
-
-### Phase 1 - MVP
-
-- ship encrypted 2-player poker
-- complete wallet flow
-- complete room flow
-- demonstrate private cards and public settlement
-
-### Phase 2 - Better Game Depth
-
-- stronger round logic
-- richer action handling
-- improved table UX
-- match history and replay metadata
-
-### Phase 3 - Platform Expansion
-
-- support multiple private game modes
-- introduce ranking and progression
-- build reusable encrypted game modules
+ 
 
 ## Demo Story
 
