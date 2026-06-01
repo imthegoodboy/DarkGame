@@ -439,6 +439,125 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.home-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(300px, 0.82fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.home-flow-panel,
+.home-live-panel {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.flow-rail,
+.proof-list {
+  display: grid;
+}
+
+.flow-step {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+
+.flow-step:first-child {
+  padding-top: 0;
+}
+
+.flow-step:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.flow-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(243, 195, 91, 0.25);
+  border-radius: 8px;
+  background: rgba(243, 195, 91, 0.1);
+  color: var(--gold);
+}
+
+.flow-step strong,
+.proof-list strong,
+.assurance-card h3 {
+  overflow-wrap: anywhere;
+}
+
+.flow-step p,
+.proof-list small,
+.assurance-card p {
+  margin: 5px 0 0;
+  color: #c4d0c7;
+  line-height: 1.55;
+}
+
+.proof-list {
+  gap: 0;
+}
+
+.proof-list div {
+  display: grid;
+  gap: 3px;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 0;
+}
+
+.proof-list div:first-child {
+  padding-top: 0;
+}
+
+.proof-list div:last-child {
+  border-bottom: 0;
+}
+
+.proof-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.home-live-panel .ghost-button {
+  width: 100%;
+}
+
+.home-assurance-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assurance-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(21, 27, 25, 0.72);
+  padding: 16px;
+}
+
+.assurance-card svg {
+  color: var(--gold);
+}
+
+.assurance-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .page-grid {
   display: grid;
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -1036,11 +1155,16 @@ input:focus {
   }
 
   .home-hero,
+  .home-detail-grid,
   .page-grid,
   .room-page,
   .game-page,
   .protocol-grid {
     grid-template-columns: 1fr;
+  }
+
+  .home-assurance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .lobby-panel,
@@ -1181,6 +1305,7 @@ input:focus {
   }
 
   .home-stats,
+  .home-assurance-grid,
   .room-summary-grid,
   .seat-grid {
     grid-template-columns: 1fr;

@@ -12,11 +12,12 @@ const REVEAL_TIMEOUT = 20 * 60;
 describe("DarkGame", () => {
   let alice: HardhatEthersSigner;
   let bob: HardhatEthersSigner;
+  let carol: HardhatEthersSigner;
   let aliceClient: CofheClient;
   let bobClient: CofheClient;
 
   before(async () => {
-    [alice, bob] = await hre.ethers.getSigners();
+    [alice, bob, carol] = await hre.ethers.getSigners();
     aliceClient = await hre.cofhe.createClientWithBatteries(alice);
     bobClient = await hre.cofhe.createClientWithBatteries(bob);
   });
@@ -172,6 +173,24 @@ describe("DarkGame", () => {
       contract,
       "InvalidActionValue"
     );
+  });
+
+  it("rejects non-player private reads and invalid winner codes", async () => {
+    const contract = await deployGame();
+    await createJoinedGame(contract);
+    await dealHands(contract);
+
+    await expect(contract.connect(carol).getPrivateHand(1)).to.be.revertedWithCustomError(
+      contract,
+      "NotPlayer"
+    );
+
+    await contract.connect(alice).act(1, 0);
+    await contract.connect(bob).act(1, 0);
+
+    await expect(
+      contract.settleEncryptedWinner(1, 3, "0x")
+    ).to.be.revertedWithCustomError(contract, "InvalidWinner");
   });
 
   it("refunds if the encrypted winner is not settled before the reveal deadline", async () => {

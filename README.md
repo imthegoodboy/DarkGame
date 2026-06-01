@@ -10,6 +10,7 @@ DarkGame now includes a working CoFHE-powered MVP:
 - CoFHE unit tests in `test/DarkGame.test.ts`
 - Sepolia deployment metadata in `deployments/11155111.json`
 - Product roadmap in `docs/ROADMAP.md`
+- Audit scope and invariants in `docs/AUDIT_SCOPE.md`
 - Production app routes for `/`, `/lobby`, `/room/:id`, `/game/:id`, and `/protocol`
 - Vercel SPA rewrites in `vercel.json` for direct room/game deep links
 
@@ -71,6 +72,7 @@ For Sepolia, create a local env file using `.env.example` and set:
 
 ```bash
 VITE_DARKGAME_ADDRESS=0x277Ee09e893ef98cAAE78800F9DA8C387A612Ddc
+VITE_DARKGAME_START_BLOCK=0
 VITE_DEFAULT_CHAIN_ID=11155111
 ```
 

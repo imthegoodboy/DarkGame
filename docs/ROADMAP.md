@@ -12,11 +12,14 @@
 - Final Wave 5 app shell with separate home, lobby, room, game, and protocol pages.
 - Production deep-link support for room and game routes through Vercel SPA rewrites.
 - Sepolia deployment and live smoke covering create, join, deal, check/check, decrypt winner, settle, and withdraw.
+- Event-indexed `GameCreated` reads from the deployment block, with a latest-table fallback for public RPC limits.
+- CI workflow for compile/test/build, Vercel preview deployments, and manual Sepolia contract deployments.
 
-## Next production hardening
+## External production gates
 
-- Add encrypted range proofs or native CoFHE RNG once the local mock and target network support the full path end to end.
-- Add indexed backend reads for historical tables and match analytics.
-- Add tournament queues, player profiles, and ranked progression.
-- Add formal audits for payout, ACL, settlement, and randomness assumptions.
-- Add CI deployment environments for testnet and frontend preview builds.
+- Native CoFHE RNG should replace shuffle shares only after the local mock and target network both support `FHE.randomEuint8()` end to end. The current installed Hardhat mock reverts random tasks, so the verified production path remains two-party encrypted shuffle entropy.
+- Formal audits for payout, ACL, settlement, and randomness assumptions require an independent security reviewer; this repo is audit-ready, not externally audited.
+
+## Post-MVP expansion
+
+- Tournament queues, player profiles, ranked progression, and richer match analytics are product extensions on top of the production high-card table flow.

@@ -11,7 +11,9 @@ async function main() {
 
   const DarkGame = await hre.ethers.getContractFactory("DarkGame");
   const darkGame = await DarkGame.deploy();
+  const deploymentTx = darkGame.deploymentTransaction();
   await darkGame.waitForDeployment();
+  const receipt = deploymentTx ? await deploymentTx.wait() : null;
 
   const address = await darkGame.getAddress();
   const output = {
@@ -19,6 +21,8 @@ async function main() {
     address,
     chainId: Number(network.chainId),
     deployer: deployer.address,
+    transactionHash: deploymentTx?.hash ?? null,
+    blockNumber: receipt?.blockNumber ?? null,
     deployedAt: new Date().toISOString(),
   };
 
@@ -37,4 +41,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-

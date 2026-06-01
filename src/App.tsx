@@ -38,6 +38,7 @@ import { cardIndexToCard, shortAddress, type DisplayCard } from "./lib/cards";
 
 const contractAddress = import.meta.env.VITE_DARKGAME_ADDRESS as Address | undefined;
 const requiredChain = configuredChain();
+const deploymentStartBlock = parseOptionalBlock(import.meta.env.VITE_DARKGAME_START_BLOCK);
 const publicClient = createPublicClient({
   chain: requiredChain,
   transport: http(
@@ -238,6 +239,11 @@ function parsePositiveBigInt(value?: string) {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = BigInt(value);
   return parsed > 0n ? parsed : undefined;
+}
+
+function parseOptionalBlock(value?: string) {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  return BigInt(value);
 }
 
 function parseAppRoute(pathname: string): AppRoute {
@@ -621,12 +627,35 @@ export default function App() {
       for (let id = nextId - 1n; id > 0n && latestIds.length < 12; id -= 1n) {
         latestIds.push(id);
       }
+      const indexedIds: bigint[] = [];
+      if (deploymentStartBlock !== undefined) {
+        try {
+          const createdLogs = await publicClient.getContractEvents({
+            address: contractAddress,
+            abi: darkGameAbi,
+            eventName: "GameCreated",
+            fromBlock: deploymentStartBlock,
+            toBlock: "latest",
+            strict: true,
+          });
+          indexedIds.push(
+            ...createdLogs
+              .map((log) => log.args.gameId)
+              .filter((id): id is bigint => typeof id === "bigint" && id > 0n && id < nextId)
+              .reverse()
+          );
+        } catch {
+          // Some public RPCs limit historical log scans; the latest window below keeps the app usable.
+        }
+      }
       const pinnedIds = [preferredGameId, route.gameId].filter(
         (id): id is bigint => Boolean(id && id > 0n && id < nextId)
       );
-      const ids = Array.from(new Set([...pinnedIds, ...latestIds].map((id) => id.toString()))).map((id) =>
-        BigInt(id)
-      );
+      const ids = Array.from(
+        new Set([...pinnedIds, ...indexedIds, ...latestIds].map((id) => id.toString()))
+      )
+        .slice(0, 150)
+        .map((id) => BigInt(id));
 
       const loaded = await Promise.all(ids.map((id) => readPublicGame(id)));
       const sorted = sortGames(loaded);
