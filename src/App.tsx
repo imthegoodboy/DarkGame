@@ -1071,6 +1071,15 @@ export default function App() {
   const activeTableCount = games.filter((game) => game.status === 2 || game.status === 3).length;
   const finishedTableCount = games.filter((game) => game.status === 4).length;
   const selectedGamePath = selectedGame ? `/game/${selectedGame.id.toString()}` : "/lobby";
+  const homeTableLabel = selectedGame
+    ? `#${selectedGame.id.toString()} · ${formatEther(selectedGame.buyIn)} ETH buy-in`
+    : "No table selected";
+  const homeTimerLabel =
+    selectedGame && selectedGame.deadline > 0n
+      ? secondsLeft > 0
+        ? formatTimer(secondsLeft)
+        : "Timeout ready"
+      : "No active timer";
   const isSelectedCreator =
     Boolean(
       selectedGame &&
@@ -1384,7 +1393,7 @@ export default function App() {
         <div className="home-hero">
           <div className="hero-copy">
             <span className="eyebrow">CoFHE testnet game</span>
-              <h1>Private high-card, settled on-chain.</h1>
+            <h1>Private high-card, settled on-chain.</h1>
             <p>
               Create a table, join with a second wallet, decrypt only your hand, and settle the encrypted high-card
               result through the contract.
@@ -1435,6 +1444,118 @@ export default function App() {
             <strong>{shortAddress(contractAddress)}</strong>
           </div>
         </div>
+
+        <section className="home-detail-grid" aria-label="DarkGame readiness details">
+          <article className="page-panel home-flow-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">End to end</span>
+                <h2>Private table flow</h2>
+              </div>
+              <div className={`status-chip status-${statusLabel.toLowerCase()}`}>{statusLabel}</div>
+            </div>
+
+            <div className="flow-rail">
+              <div className="flow-step">
+                <span className="flow-icon">
+                  <Plus size={18} />
+                </span>
+                <div>
+                  <strong>Create or join</strong>
+                  <p>Both players lock the same buy-in on-chain before a hand can start.</p>
+                </div>
+              </div>
+              <div className="flow-step">
+                <span className="flow-icon">
+                  <RefreshCw size={18} />
+                </span>
+                <div>
+                  <strong>Encrypted shuffle</strong>
+                  <p>Each seat contributes encrypted shuffle entropy, then the contract deals two private cards.</p>
+                </div>
+              </div>
+              <div className="flow-step">
+                <span className="flow-icon">
+                  <Eye size={18} />
+                </span>
+                <div>
+                  <strong>Private reveal</strong>
+                  <p>Cards stay hidden from the table; only the seated wallet can decrypt its own hand.</p>
+                </div>
+              </div>
+              <div className="flow-step">
+                <span className="flow-icon">
+                  <BadgeCheck size={18} />
+                </span>
+                <div>
+                  <strong>Settle and withdraw</strong>
+                  <p>The encrypted winner result moves funds into pull payouts, including split-pot ties.</p>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <aside className="page-panel home-live-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="eyebrow">Live chain</span>
+                <h2>Current table</h2>
+              </div>
+              <Gamepad2 size={22} />
+            </div>
+
+            <div className="proof-list">
+              <div>
+                <span>Selected</span>
+                <strong>{homeTableLabel}</strong>
+                <small>{tablePrompt}</small>
+              </div>
+              <div>
+                <span>Network</span>
+                <strong>{requiredChain.name}</strong>
+                <small>Chain ID {requiredChain.id}</small>
+              </div>
+              <div>
+                <span>Action timer</span>
+                <strong>{homeTimerLabel}</strong>
+                <small>Hands, turns, and reveal windows can recover on timeout.</small>
+              </div>
+              <div>
+                <span>Your withdrawal</span>
+                <strong>{formatEther(pendingWithdrawal)} ETH</strong>
+                <small>Winnings stay claimable from the contract.</small>
+              </div>
+            </div>
+
+            <button className="ghost-button" type="button" onClick={() => navigate(selectedGamePath)}>
+              <Gamepad2 size={17} />
+              Inspect Table
+            </button>
+          </aside>
+        </section>
+
+        <section className="home-assurance-grid" aria-label="DarkGame production safeguards">
+          <article className="assurance-card">
+            <Shield size={21} />
+            <h3>CoFHE-gated hands</h3>
+            <p>Private hand decryptions are granted only to the wallet seated in the game.</p>
+          </article>
+          <article className="assurance-card">
+            <TimerReset size={21} />
+            <h3>Timeout recovery</h3>
+            <p>Open rooms, stalled turns, and reveal delays have contract-level exits.</p>
+          </article>
+          <article className="assurance-card">
+            <CircleDollarSign size={21} />
+            <h3>Pull payouts</h3>
+            <p>Settled funds are withdrawn by players, reducing payout failure risk.</p>
+          </article>
+          <article className="assurance-card">
+            <Trophy size={21} />
+            <h3>Split-pot ties</h3>
+            <p>Equal encrypted scores finish cleanly with both players able to claim.</p>
+          </article>
+        </section>
       </section>
     );
   }
