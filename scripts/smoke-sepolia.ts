@@ -161,8 +161,8 @@ async function main() {
       )
     : hre.ethers.Wallet.createRandom().connect(hre.ethers.provider);
   console.log(`Smoke contract: ${metadata.address}`);
-  console.log(`Deployer: ${deployer.address}`);
-  console.log(`Second wallet: ${tempWallet.address}`);
+  console.log("Deployer: configured");
+  console.log(secondPrivateKey ? "Second wallet: configured" : "Second wallet: temporary");
 
   if (!process.env.PRIVATE_KEY) {
     throw new Error("Set PRIVATE_KEY for the deployer before running the smoke test.");

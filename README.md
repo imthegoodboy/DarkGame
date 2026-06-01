@@ -6,10 +6,9 @@ DarkGame is a privacy-first on-chain high-card game built for the Fhenix Wavehac
 
 - Frontend: https://darkgame-six.vercel.app
 - Network: Ethereum Sepolia, chain ID `11155111`
-- Contract: `0x8330C0FFd0D4781b6EA0951C4211d8ff8bC8be0f`
-- Deployment block: `10968063`
-- Deployment tx: `0x4a44a5eeff95e9f7495f4055514cd54130f84fe88513bb6ec67966d8c07dce01`
-- Deployer: `0x192baEd8d1bA5a94391DbCbe87C1A2e5f6E07C5D`
+- Contract: `0x8BB4Dcc8558E83DEfD4c447B0c44294d2AbA9167`
+- Deployment block: `10968537`
+- Deployment tx: `0x885defc7e44823c37daa46a28af6f4ec010871528839412f0a461b601be03d46`
 
 The frontend is configured with `VITE_DARKGAME_ADDRESS` and `VITE_DARKGAME_START_BLOCK`, so the lobby can read indexed `GameCreated` logs from the current deployment instead of depending only on the latest table IDs.
 
@@ -109,8 +108,8 @@ npm run dev
 Create `.env.local` from `.env.example`:
 
 ```bash
-VITE_DARKGAME_ADDRESS=0x8330C0FFd0D4781b6EA0951C4211d8ff8bC8be0f
-VITE_DARKGAME_START_BLOCK=10968063
+VITE_DARKGAME_ADDRESS=0x8BB4Dcc8558E83DEfD4c447B0c44294d2AbA9167
+VITE_DARKGAME_START_BLOCK=10968537
 VITE_DEFAULT_CHAIN_ID=11155111
 VITE_SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 ```
@@ -123,7 +122,7 @@ Never commit real private keys. Use throwaway testnet keys only.
 PRIVATE_KEY=0xYOUR_TESTNET_PRIVATE_KEY npm run deploy:sepolia
 ```
 
-The deploy script writes `deployments/11155111.json` with the contract address, deployer, transaction hash, block number, and timestamp.
+The deploy script writes `deployments/11155111.json` with the contract address, transaction hash, block number, and timestamp.
 
 After deploying, update:
 

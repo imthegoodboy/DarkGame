@@ -34,7 +34,7 @@ import {
 } from "viem";
 import { configuredChain } from "./lib/chains";
 import { darkGameAbi } from "./contracts/darkGameAbi";
-import { cardIndexToCard, shortAddress, type DisplayCard } from "./lib/cards";
+import { cardIndexToCard, type DisplayCard } from "./lib/cards";
 
 const contractAddress = import.meta.env.VITE_DARKGAME_ADDRESS as Address | undefined;
 const requiredChain = configuredChain();
@@ -386,6 +386,13 @@ export default function App() {
   const topSeatActive = selectedGame?.status === 2 && selectedGame.turn === topSeat;
   const bottomSeatActive = selectedGame?.status === 2 && playerSeat !== null && selectedGame.turn === playerSeat;
   const bottomSeatNumber = playerSeat === null ? null : playerSeat + 1;
+  const playerTableLabel = bottomSeatNumber === null ? (isConnected ? "Spectator" : "Not seated") : `Seat ${bottomSeatNumber}`;
+  const winnerSeatLabel = (() => {
+    if (!selectedGame || selectedGame.winner === zeroAddress) return null;
+    if (selectedGame.winner.toLowerCase() === selectedGame.playerOne.toLowerCase()) return "Seat 1";
+    if (selectedGame.winner.toLowerCase() === selectedGame.playerTwo.toLowerCase()) return "Seat 2";
+    return "Settled";
+  })();
   const playerHasCards = Boolean(playerHandDealt || selectedGame?.handCount === 2);
   const tablePrompt = (() => {
     if (!selectedGame) return "Choose a table";
@@ -1194,7 +1201,7 @@ export default function App() {
           <div className={`opponent-seat seat ${topSeatActive ? "active-seat" : ""}`}>
             <div>
               <span>Seat {topSeat + 1}</span>
-              <strong>{shortAddress(topSeatAddress)}</strong>
+              <strong>{topSeatHasCards ? "In hand" : "Waiting"}</strong>
             </div>
             {selectedGame?.winner === topSeatAddress && selectedGame?.winner !== zeroAddress && (
               <Crown size={18} />
@@ -1254,8 +1261,8 @@ export default function App() {
 
           <div className={`player-seat seat ${bottomSeatActive ? "active-seat" : ""}`}>
             <div>
-              <span>{bottomSeatNumber === null ? "Spectator" : `Seat ${bottomSeatNumber}`}</span>
-              <strong>{shortAddress(address)}</strong>
+              <span>{playerTableLabel}</span>
+              <strong>{playerSeat === null ? "Private view locked" : "Private view"}</strong>
             </div>
             {selectedGame?.winner === address && selectedGame?.winner !== zeroAddress && (
               <Crown size={18} />
@@ -1379,7 +1386,7 @@ export default function App() {
               ) : selectedGame?.winner && selectedGame.winner !== zeroAddress ? (
                 <>
                   <Trophy size={15} />
-                  {shortAddress(selectedGame.winner)}
+                  {winnerSeatLabel}
                 </>
               ) : (
                 "Encrypted"
@@ -1470,7 +1477,7 @@ export default function App() {
           </div>
           <div>
             <span>Contract</span>
-            <strong>{shortAddress(contractAddress)}</strong>
+            <strong>{isContractReady ? "Configured" : "Pending"}</strong>
           </div>
         </div>
 
@@ -1671,7 +1678,7 @@ export default function App() {
           <div className="seat-grid">
             <div className={`seat-card ${playerSeat === 0 ? "is-you" : ""}`}>
               <span>Seat 1</span>
-              <strong>{shortAddress(selectedGame.playerOne)}</strong>
+              <strong>{playerSeat === 0 ? "You" : "Private"}</strong>
               <small>
                 {selectedGame.playerOneHandDealt
                   ? "Hand dealt"
@@ -1682,7 +1689,7 @@ export default function App() {
             </div>
             <div className={`seat-card ${playerSeat === 1 ? "is-you" : ""}`}>
               <span>Seat 2</span>
-              <strong>{shortAddress(selectedGame.playerTwo)}</strong>
+              <strong>{playerSeat === 1 ? "You" : selectedGame.playerTwo === zeroAddress ? "Open" : "Private"}</strong>
               <small>
                 {selectedGame.playerTwoHandDealt
                   ? "Hand dealt"
@@ -1826,7 +1833,7 @@ export default function App() {
                 title="Switch network"
               >
                 <RefreshCw size={17} />
-                {needsNetwork ? "Switch" : shortAddress(address)}
+                {needsNetwork ? "Switch" : "Connected"}
               </button>
               <button
                 className="icon-button"

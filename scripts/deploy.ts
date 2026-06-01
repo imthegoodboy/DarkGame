@@ -6,7 +6,7 @@ async function main() {
   const [deployer] = await hre.ethers.getSigners();
   const network = await hre.ethers.provider.getNetwork();
 
-  console.log(`Deploying DarkGame from ${deployer.address}`);
+  console.log("Deploying DarkGame");
   console.log(`Network: ${network.name} (${network.chainId})`);
 
   const DarkGame = await hre.ethers.getContractFactory("DarkGame");
@@ -20,7 +20,6 @@ async function main() {
     contract: "DarkGame",
     address,
     chainId: Number(network.chainId),
-    deployer: deployer.address,
     transactionHash: deploymentTx?.hash ?? null,
     blockNumber: receipt?.blockNumber ?? null,
     deployedAt: new Date().toISOString(),
