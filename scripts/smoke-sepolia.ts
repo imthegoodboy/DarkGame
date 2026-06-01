@@ -9,7 +9,14 @@ import { privateKeyToAccount } from "viem/accounts";
 import { sepolia } from "viem/chains";
 
 const BUY_IN = hre.ethers.parseEther("0.0001");
-const TEMP_WALLET_FUNDING = hre.ethers.parseEther("0.0025");
+const GAS_PRICE_SAFETY_MULTIPLIER = 2n;
+const TEMP_WALLET_GAS_UNITS =
+  350_000n + // joinGame
+  1_200_000n + // submitShuffleEntropy
+  650_000n + // act
+  150_000n + // optional withdraw
+  21_000n + // sweep remaining balance
+  1_000_000n; // buffer for fee spikes
 const DEPLOYER_SMOKE_GAS_UNITS =
   21_000n + // optional temp-wallet funding
   350_000n + // createGame
@@ -19,6 +26,14 @@ const DEPLOYER_SMOKE_GAS_UNITS =
   800_000n + // settleEncryptedWinner
   150_000n + // optional withdraw
   2_000_000n; // buffer for fee spikes and cleanup
+
+function gasBudget(gasPrice: bigint, gasUnits: bigint) {
+  return gasPrice * gasUnits * GAS_PRICE_SAFETY_MULTIPLIER;
+}
+
+function tempWalletFundingForGas(gasPrice: bigint) {
+  return BUY_IN + gasBudget(gasPrice, TEMP_WALLET_GAS_UNITS);
+}
 
 async function waitFor(txPromise: Promise<any>, label: string) {
   const tx = await txPromise;
@@ -69,20 +84,29 @@ async function withdrawIfPending(contract: any, signer: any, label: string) {
 }
 
 async function sweepTempWallet(tempWallet: any, recipient: string) {
-  const balance = await hre.ethers.provider.getBalance(tempWallet.address);
-  const feeData = await hre.ethers.provider.getFeeData();
-  const gasPrice = feeData.gasPrice ?? hre.ethers.parseUnits("2", "gwei");
-  const gasCost = gasPrice * 21_000n;
-  if (balance <= gasCost) return;
+  try {
+    const balance = await hre.ethers.provider.getBalance(tempWallet.address);
+    const feeData = await hre.ethers.provider.getFeeData();
+    const maxFeePerGas =
+      (feeData.maxFeePerGas ?? feeData.gasPrice ?? hre.ethers.parseUnits("2", "gwei")) *
+      GAS_PRICE_SAFETY_MULTIPLIER;
+    const gasCost = maxFeePerGas * 21_000n;
+    if (balance <= gasCost) return;
 
-  await waitFor(
-    tempWallet.sendTransaction({
-      to: recipient,
-      value: balance - gasCost,
-      gasPrice,
-    }),
-    "Sweep temp wallet"
-  );
+    await waitFor(
+      tempWallet.sendTransaction({
+        to: recipient,
+        value: balance - gasCost,
+        gasLimit: 21_000n,
+        maxFeePerGas,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? undefined,
+      }),
+      "Sweep temp wallet"
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Sweep temp wallet skipped: ${message}`);
+  }
 }
 
 async function cleanupOpenTables(contract: any, deployer: any) {
@@ -102,13 +126,13 @@ async function cleanupOpenTables(contract: any, deployer: any) {
   }
 }
 
-async function assertDeployerCanRunSmoke(deployer: any, willFundTempWallet: boolean) {
+async function assertDeployerCanRunSmoke(deployer: any, tempWalletFunding: bigint) {
   const deployerAddress = await deployer.getAddress();
   const balance = await hre.ethers.provider.getBalance(deployerAddress);
   const feeData = await hre.ethers.provider.getFeeData();
   const gasPrice = feeData.gasPrice ?? hre.ethers.parseUnits("2", "gwei");
-  const valueRequired = BUY_IN + (willFundTempWallet ? TEMP_WALLET_FUNDING : 0n);
-  const required = valueRequired + gasPrice * DEPLOYER_SMOKE_GAS_UNITS;
+  const valueRequired = BUY_IN + tempWalletFunding;
+  const required = valueRequired + gasBudget(gasPrice, DEPLOYER_SMOKE_GAS_UNITS);
 
   if (balance < required) {
     throw new Error(
@@ -143,7 +167,10 @@ async function main() {
   if (!process.env.PRIVATE_KEY) {
     throw new Error("Set PRIVATE_KEY for the deployer before running the smoke test.");
   }
-  await assertDeployerCanRunSmoke(deployer, !secondPrivateKey);
+  const feeData = await hre.ethers.provider.getFeeData();
+  const gasPrice = feeData.gasPrice ?? hre.ethers.parseUnits("2", "gwei");
+  const tempWalletFunding = secondPrivateKey ? 0n : tempWalletFundingForGas(gasPrice);
+  await assertDeployerCanRunSmoke(deployer, tempWalletFunding);
   const aliceClient = await createSepoliaCofheClient(process.env.PRIVATE_KEY);
   const bobClient = await createSepoliaCofheClient(tempWallet.privateKey);
   let tempFunded = false;
@@ -153,7 +180,7 @@ async function main() {
       await waitFor(
         deployer.sendTransaction({
           to: tempWallet.address,
-          value: TEMP_WALLET_FUNDING,
+          value: tempWalletFunding,
           gasLimit: 21_000n,
         }),
         "Fund temp wallet"
