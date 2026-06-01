@@ -11,7 +11,7 @@
 - Responsive app UI with lobby, table, private hand area, exact action dock, reveal timeout and withdraw controls, and on-chain state inspector.
 - Final Wave 5 app shell with separate home, lobby, room, game, and protocol pages.
 - Production deep-link support for room and game routes through Vercel SPA rewrites.
-- Sepolia deployment and live smoke covering create, join, deal, check/check, decrypt winner, settle, and withdraw.
+- Sepolia deployment metadata and read checks for the current contract, plus a gas-aware live smoke script covering create, join, deal, check/check, decrypt winner, settle, and withdraw when the deployer has enough testnet ETH at current gas prices.
 - Event-indexed `GameCreated` reads from the deployment block, with a latest-table fallback for public RPC limits.
 - CI workflow for compile/test/build, Vercel preview deployments, and manual Sepolia contract deployments.
 

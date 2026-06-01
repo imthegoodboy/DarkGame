@@ -6,10 +6,10 @@ DarkGame is a privacy-first on-chain high-card game built for the Fhenix Wavehac
 
 - Frontend: https://darkgame-six.vercel.app
 - Network: Ethereum Sepolia, chain ID `11155111`
-- Contract: `0x8aE22979669d93B106304700B27657Fe2814Bd4a`
-- Deployment block: `10967292`
-- Deployment tx: `0xa33de378c930aaf4e9aaf590d99b09acec1f45d835439dd9f9392012cbf9182f`
-- Deployer: `0x96dAd720ec7cf5c3a0c6Cf724A18C82bfB3B2DD3`
+- Contract: `0x8330C0FFd0D4781b6EA0951C4211d8ff8bC8be0f`
+- Deployment block: `10968063`
+- Deployment tx: `0x4a44a5eeff95e9f7495f4055514cd54130f84fe88513bb6ec67966d8c07dce01`
+- Deployer: `0x192baEd8d1bA5a94391DbCbe87C1A2e5f6E07C5D`
 
 The frontend is configured with `VITE_DARKGAME_ADDRESS` and `VITE_DARKGAME_START_BLOCK`, so the lobby can read indexed `GameCreated` logs from the current deployment instead of depending only on the latest table IDs.
 
@@ -109,8 +109,8 @@ npm run dev
 Create `.env.local` from `.env.example`:
 
 ```bash
-VITE_DARKGAME_ADDRESS=0x8aE22979669d93B106304700B27657Fe2814Bd4a
-VITE_DARKGAME_START_BLOCK=10967292
+VITE_DARKGAME_ADDRESS=0x8330C0FFd0D4781b6EA0951C4211d8ff8bC8be0f
+VITE_DARKGAME_START_BLOCK=10968063
 VITE_DEFAULT_CHAIN_ID=11155111
 VITE_SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 ```
@@ -144,7 +144,7 @@ For the full encrypted deal smoke, the deployer must have enough Sepolia ETH bec
 PRIVATE_KEY=0xDEPLOYER_KEY SECOND_PRIVATE_KEY=0xSECOND_TEST_WALLET npm run smoke:sepolia
 ```
 
-The smoke script creates a tiny table, funds or uses a second wallet, joins, submits encrypted entropy, deals, decrypts both private hands through the SDK, checks both turns, settles the encrypted winner, withdraws payouts, and cleans up temporary wallet funds where possible.
+The smoke script estimates the deployer's required gas and value before sending transactions. When funded, it creates a tiny table, funds or uses a second wallet, joins, submits encrypted entropy, deals, decrypts both private hands through the SDK, checks both turns, settles the encrypted winner, withdraws payouts, and cleans up temporary wallet funds where possible.
 
 ## Project Structure
 
