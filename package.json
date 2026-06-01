@@ -2,7 +2,7 @@
   "name": "darkgame",
   "version": "0.1.0",
   "private": true,
-  "description": "Privacy-first encrypted on-chain poker MVP built with CoFHE and React.",
+  "description": "Privacy-first encrypted on-chain high-card MVP built with CoFHE and React.",
   "scripts": {
     "dev": "node node_modules/vite/bin/vite.js --host 127.0.0.1",
     "build": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json && node node_modules/vite/bin/vite.js build",
@@ -18,7 +18,7 @@
     "@fhenixprotocol/cofhe-contracts": "^0.1.3",
     "@openzeppelin/contracts": "^5.0.2",
     "fdir": "^6.5.0",
-    "lucide-react": "^1.14.0",
+    "lucide-react": "1.14.0",
     "picomatch": "^4.0.4",
     "postcss": "^8.5.14",
     "react": "^18.3.1",
@@ -34,6 +34,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "dotenv": "^16.4.7",
+    "fp-ts": "1.19.3",
     "hardhat": "^2.22.17",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"

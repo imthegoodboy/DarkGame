@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {FHE, euint8} from "@fhenixprotocol/cofhe-contracts/FHE.sol";
+import {FHE, euint8, InEuint8} from "@fhenixprotocol/cofhe-contracts/FHE.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract DarkGame is ReentrancyGuard {
@@ -34,6 +34,8 @@ contract DarkGame is ReentrancyGuard {
         address winner;
         bool playerOneHandDealt;
         bool playerTwoHandDealt;
+        bool playerOneShuffleReady;
+        bool playerTwoShuffleReady;
         uint256 currentBet;
         uint256 playerOneRoundStake;
         uint256 playerTwoRoundStake;
@@ -47,6 +49,7 @@ contract DarkGame is ReentrancyGuard {
         bool acted;
         bool folded;
         bool handDealt;
+        bool shuffleReady;
         uint256 committed;
         uint256 roundStake;
         uint256 pendingWithdrawal;
@@ -58,8 +61,10 @@ contract DarkGame is ReentrancyGuard {
         bool acted;
         bool folded;
         bool handSubmitted;
+        bool entropySubmitted;
         uint256 committed;
         uint256 roundStake;
+        euint8[4] entropy;
         euint8 cardA;
         euint8 cardB;
         euint8 score;
@@ -100,6 +105,10 @@ contract DarkGame is ReentrancyGuard {
         address indexed challenger,
         uint256 pot
     );
+    event ShuffleEntropySubmitted(
+        uint256 indexed gameId,
+        address indexed player
+    );
     event CardsDealt(uint256 indexed gameId);
     event HandSubmitted(uint256 indexed gameId, address indexed player);
     event PlayerActed(
@@ -115,6 +124,11 @@ contract DarkGame is ReentrancyGuard {
         uint8 winnerSeat,
         uint256 payout
     );
+    event GameTied(
+        uint256 indexed gameId,
+        uint256 playerOnePayout,
+        uint256 playerTwoPayout
+    );
     event GameCancelled(uint256 indexed gameId);
     event GameTimedOut(uint256 indexed gameId, address indexed caller);
     event WithdrawalQueued(address indexed recipient, uint256 amount);
@@ -128,6 +142,8 @@ contract DarkGame is ReentrancyGuard {
     error NotTurn();
     error HandsNotReady();
     error HandsAlreadyDealt();
+    error ShuffleEntropyMissing();
+    error ShuffleEntropyAlreadySubmitted();
     error InvalidActionValue();
     error SamePlayer();
     error InvalidWinner();
@@ -184,16 +200,45 @@ contract DarkGame is ReentrancyGuard {
         emit GameJoined(gameId, msg.sender, game.pot);
     }
 
+    function submitShuffleEntropy(
+        uint256 gameId,
+        InEuint8[4] calldata encryptedEntropy
+    ) external nonReentrant {
+        GameState storage game = _game(gameId);
+        if (game.status != GameStatus.Active) revert InvalidStatus();
+        if (game.handCount != 0) revert HandsAlreadyDealt();
+        if (block.timestamp > game.deadline) revert DeadlinePassed();
+
+        uint8 seat = _seatOf(gameId, msg.sender);
+        PlayerState storage player = players[gameId][seat];
+        if (player.entropySubmitted) revert ShuffleEntropyAlreadySubmitted();
+
+        for (uint8 i = 0; i < 4; i++) {
+            euint8 entropy = FHE.asEuint8(encryptedEntropy[i]);
+            player.entropy[i] = entropy;
+            FHE.allowThis(entropy);
+        }
+
+        player.entropySubmitted = true;
+        game.updatedAt = block.timestamp;
+
+        emit ShuffleEntropySubmitted(gameId, msg.sender);
+    }
+
     function dealHands(uint256 gameId) external nonReentrant {
         GameState storage game = _game(gameId);
         if (game.status != GameStatus.Active) revert InvalidStatus();
         _seatOf(gameId, msg.sender);
         if (game.handCount != 0) revert HandsAlreadyDealt();
         if (block.timestamp > game.deadline) revert DeadlinePassed();
+        if (
+            !players[gameId][0].entropySubmitted ||
+            !players[gameId][1].entropySubmitted
+        ) revert ShuffleEntropyMissing();
 
-        uint8[4] memory dealt = _drawFour(gameId);
-        _storePlainHand(gameId, 0, dealt[0], dealt[1]);
-        _storePlainHand(gameId, 1, dealt[2], dealt[3]);
+        euint8[4] memory dealt = _drawFour(gameId);
+        _storeEncryptedHand(gameId, 0, dealt[0], dealt[1]);
+        _storeEncryptedHand(gameId, 1, dealt[2], dealt[3]);
 
         players[gameId][0].handSubmitted = true;
         players[gameId][1].handSubmitted = true;
@@ -211,7 +256,7 @@ contract DarkGame is ReentrancyGuard {
         emit CardsDealt(gameId);
     }
 
-    function act(uint256 gameId, PlayerAction action)
+    function act(uint256 gameId, uint8 actionCode)
         external
         payable
         nonReentrant
@@ -220,6 +265,10 @@ contract DarkGame is ReentrancyGuard {
         if (game.status != GameStatus.Active) revert InvalidStatus();
         if (game.handCount < 2) revert HandsNotReady();
         if (block.timestamp > game.deadline) revert DeadlinePassed();
+        if (actionCode > uint8(PlayerAction.Fold)) {
+            revert InvalidActionValue();
+        }
+        PlayerAction action = PlayerAction(actionCode);
 
         uint8 seat = _seatOf(gameId, msg.sender);
         if (seat != game.turn) revert NotTurn();
@@ -288,7 +337,7 @@ contract DarkGame is ReentrancyGuard {
     ) external nonReentrant {
         GameState storage game = _game(gameId);
         if (game.status != GameStatus.AwaitingReveal) revert InvalidStatus();
-        if (winnerSeatCode != 1 && winnerSeatCode != 2) revert InvalidWinner();
+        if (winnerSeatCode > 2) revert InvalidWinner();
 
         bool isValid = FHE.verifyDecryptResult(
             game.winnerCode,
@@ -297,7 +346,11 @@ contract DarkGame is ReentrancyGuard {
         );
         if (!isValid) revert InvalidDecryptProof();
 
-        _finishWithWinner(gameId, winnerSeatCode - 1);
+        if (winnerSeatCode == 0) {
+            _finishWithTie(gameId);
+        } else {
+            _finishWithWinner(gameId, winnerSeatCode - 1);
+        }
     }
 
     function cancelOpenGame(uint256 gameId) external nonReentrant {
@@ -322,7 +375,9 @@ contract DarkGame is ReentrancyGuard {
 
         emit GameTimedOut(gameId, msg.sender);
 
-        if (game.status == GameStatus.Active && game.handCount == 2) {
+        if (game.status == GameStatus.AwaitingReveal) {
+            _cancelAndRefund(gameId);
+        } else if (game.handCount == 2) {
             _finishWithWinner(gameId, game.turn == 0 ? 1 : 0);
         } else {
             _cancelAndRefund(gameId);
@@ -363,6 +418,8 @@ contract DarkGame is ReentrancyGuard {
                 winner: game.winner,
                 playerOneHandDealt: players[gameId][0].handSubmitted,
                 playerTwoHandDealt: players[gameId][1].handSubmitted,
+                playerOneShuffleReady: players[gameId][0].entropySubmitted,
+                playerTwoShuffleReady: players[gameId][1].entropySubmitted,
                 currentBet: game.currentBet,
                 playerOneRoundStake: players[gameId][0].roundStake,
                 playerTwoRoundStake: players[gameId][1].roundStake,
@@ -385,6 +442,7 @@ contract DarkGame is ReentrancyGuard {
                 acted: player.acted,
                 folded: player.folded,
                 handDealt: player.handSubmitted,
+                shuffleReady: player.entropySubmitted,
                 committed: player.committed,
                 roundStake: player.roundStake,
                 pendingWithdrawal: pendingWithdrawals[account]
@@ -412,49 +470,40 @@ contract DarkGame is ReentrancyGuard {
         return game.winnerCode;
     }
 
-    function _storePlainHand(
+    function _storeEncryptedHand(
         uint256 gameId,
         uint8 seat,
-        uint8 cardA,
-        uint8 cardB
+        euint8 cardA,
+        euint8 cardB
     ) private {
         if (seat > 1) revert InvalidSeat();
 
         PlayerState storage player = players[gameId][seat];
-        euint8 encryptedCardA = FHE.asEuint8(cardA);
-        euint8 encryptedCardB = FHE.asEuint8(cardB);
-        euint8 rankA = FHE.asEuint8(_rank(cardA));
-        euint8 rankB = FHE.asEuint8(_rank(cardB));
-        euint8 highCard = FHE.max(rankA, rankB);
-        euint8 pairBonus = FHE.select(
-            FHE.eq(rankA, rankB),
-            FHE.asEuint8(20),
-            FHE.asEuint8(0)
-        );
-        euint8 score = FHE.add(highCard, pairBonus);
+        euint8 score = FHE.max(cardA, cardB);
 
-        player.cardA = encryptedCardA;
-        player.cardB = encryptedCardB;
+        player.cardA = cardA;
+        player.cardB = cardB;
         player.score = score;
 
-        FHE.allowThis(encryptedCardA);
-        FHE.allowThis(encryptedCardB);
+        FHE.allowThis(cardA);
+        FHE.allowThis(cardB);
         FHE.allowThis(score);
-        FHE.allow(encryptedCardA, player.wallet);
-        FHE.allow(encryptedCardB, player.wallet);
+        FHE.allow(cardA, player.wallet);
+        FHE.allow(cardB, player.wallet);
         FHE.allow(score, player.wallet);
     }
 
     function _refreshWinner(uint256 gameId) private {
         euint8 seatOneCode = FHE.asEuint8(1);
         euint8 seatTwoCode = FHE.asEuint8(2);
+        euint8 tieCode = FHE.asEuint8(0);
         euint8 seatOneScore = players[gameId][0].score;
         euint8 seatTwoScore = players[gameId][1].score;
 
         euint8 winnerCode = FHE.select(
-            FHE.gte(seatOneScore, seatTwoScore),
+            FHE.gt(seatOneScore, seatTwoScore),
             seatOneCode,
-            seatTwoCode
+            FHE.select(FHE.gt(seatTwoScore, seatOneScore), seatTwoCode, tieCode)
         );
 
         games[gameId].winnerCode = winnerCode;
@@ -474,6 +523,23 @@ contract DarkGame is ReentrancyGuard {
 
         _credit(winner, payout);
         emit GameSettled(gameId, winner, winnerSeat, payout);
+    }
+
+    function _finishWithTie(uint256 gameId) private {
+        GameState storage game = games[gameId];
+        uint256 payout = game.pot;
+        uint256 playerTwoPayout = payout / 2;
+        uint256 playerOnePayout = payout - playerTwoPayout;
+
+        game.pot = 0;
+        game.winner = address(0);
+        game.status = GameStatus.Finished;
+        game.deadline = 0;
+        game.updatedAt = block.timestamp;
+
+        _credit(players[gameId][0].wallet, playerOnePayout);
+        _credit(players[gameId][1].wallet, playerTwoPayout);
+        emit GameTied(gameId, playerOnePayout, playerTwoPayout);
     }
 
     function _cancelAndRefund(uint256 gameId) private {
@@ -510,48 +576,117 @@ contract DarkGame is ReentrancyGuard {
 
     function _drawFour(uint256 gameId)
         private
-        view
-        returns (uint8[4] memory dealt)
+        returns (euint8[4] memory dealt)
     {
-        bytes32 entropy = keccak256(
-            abi.encodePacked(
-                block.prevrandao,
-                blockhash(block.number - 1),
-                address(this),
-                gameId,
-                games[gameId].createdAt,
-                games[gameId].updatedAt,
-                players[gameId][0].wallet,
-                players[gameId][1].wallet
-            )
+        euint8 card0 = _boundedIndex(_combinedEntropy(gameId, 0), 52);
+        euint8 card1 = _skipSorted1(
+            _boundedIndex(_combinedEntropy(gameId, 1), 51),
+            card0
         );
-        uint256 nonce;
+        (euint8 sorted0, euint8 sorted1) = _sort2(card0, card1);
 
-        for (uint8 i = 0; i < 4; i++) {
-            while (true) {
-                uint8 candidate = uint8(
-                    uint256(keccak256(abi.encodePacked(entropy, nonce))) % 52
-                );
-                nonce++;
+        euint8 card2 = _skipSorted2(
+            _boundedIndex(_combinedEntropy(gameId, 2), 50),
+            sorted0,
+            sorted1
+        );
+        euint8 sorted2;
+        (sorted0, sorted1, sorted2) = _sort3(sorted0, sorted1, card2);
 
-                bool used;
-                for (uint8 j = 0; j < i; j++) {
-                    if (dealt[j] == candidate) {
-                        used = true;
-                        break;
-                    }
-                }
+        euint8 card3 = _skipSorted3(
+            _boundedIndex(_combinedEntropy(gameId, 3), 49),
+            sorted0,
+            sorted1,
+            sorted2
+        );
 
-                if (!used) {
-                    dealt[i] = candidate;
-                    break;
-                }
-            }
-        }
+        dealt[0] = card0;
+        dealt[1] = card1;
+        dealt[2] = card2;
+        dealt[3] = card3;
     }
 
-    function _rank(uint8 card) private pure returns (uint8) {
-        return (card % 13) + 2;
+    function _combinedEntropy(uint256 gameId, uint8 index)
+        private
+        returns (euint8)
+    {
+        return
+            FHE.add(
+                players[gameId][0].entropy[index],
+                players[gameId][1].entropy[index]
+            );
+    }
+
+    function _boundedIndex(euint8 entropy, uint8 modulo)
+        private
+        returns (euint8)
+    {
+        euint8 value = entropy;
+        for (uint8 i = 0; i < 5; i++) {
+            value = _subtractIfAtLeast(value, modulo);
+        }
+        return value;
+    }
+
+    function _subtractIfAtLeast(euint8 value, uint8 threshold)
+        private
+        returns (euint8)
+    {
+        return
+            FHE.select(
+                FHE.gte(value, FHE.asEuint8(threshold)),
+                FHE.sub(value, FHE.asEuint8(threshold)),
+                value
+            );
+    }
+
+    function _skipSorted1(euint8 draw, euint8 sorted0)
+        private
+        returns (euint8)
+    {
+        return
+            FHE.select(
+                FHE.gte(draw, sorted0),
+                FHE.add(draw, FHE.asEuint8(1)),
+                draw
+            );
+    }
+
+    function _skipSorted2(euint8 draw, euint8 sorted0, euint8 sorted1)
+        private
+        returns (euint8)
+    {
+        euint8 candidate = _skipSorted1(draw, sorted0);
+        return _skipSorted1(candidate, sorted1);
+    }
+
+    function _skipSorted3(
+        euint8 draw,
+        euint8 sorted0,
+        euint8 sorted1,
+        euint8 sorted2
+    ) private returns (euint8) {
+        euint8 candidate = _skipSorted1(draw, sorted0);
+        candidate = _skipSorted1(candidate, sorted1);
+        return _skipSorted1(candidate, sorted2);
+    }
+
+    function _sort2(euint8 left, euint8 right)
+        private
+        returns (euint8 low, euint8 high)
+    {
+        low = FHE.min(left, right);
+        high = FHE.max(left, right);
+    }
+
+    function _sort3(
+        euint8 sorted0,
+        euint8 sorted1,
+        euint8 next
+    ) private returns (euint8 low, euint8 middle, euint8 high) {
+        (euint8 lowerTail, euint8 upperTail) = _sort2(sorted1, next);
+        (low, middle) = _sort2(sorted0, lowerTail);
+        high = upperTail;
     }
 
     function _game(uint256 gameId)

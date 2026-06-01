@@ -1,11 +1,47 @@
 export const darkGameAbi = [
   {
+    type: "event",
+    name: "GameCreated",
+    anonymous: false,
+    inputs: [
+      { name: "gameId", type: "uint256", indexed: true },
+      { name: "creator", type: "address", indexed: true },
+      { name: "buyIn", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ShuffleEntropySubmitted",
+    anonymous: false,
+    inputs: [
+      { name: "gameId", type: "uint256", indexed: true },
+      { name: "player", type: "address", indexed: true },
+    ],
+  },
+  {
+    type: "event",
+    name: "GameTied",
+    anonymous: false,
+    inputs: [
+      { name: "gameId", type: "uint256", indexed: true },
+      { name: "playerOnePayout", type: "uint256", indexed: false },
+      { name: "playerTwoPayout", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "function",
+    name: "REVEAL_TIMEOUT",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
     type: "function",
     name: "act",
     stateMutability: "payable",
     inputs: [
       { name: "gameId", type: "uint256" },
-      { name: "action", type: "uint8" },
+      { name: "actionCode", type: "uint8" },
     ],
     outputs: [],
   },
@@ -54,6 +90,7 @@ export const darkGameAbi = [
           { name: "acted", type: "bool" },
           { name: "folded", type: "bool" },
           { name: "handDealt", type: "bool" },
+          { name: "shuffleReady", type: "bool" },
           { name: "committed", type: "uint256" },
           { name: "roundStake", type: "uint256" },
           { name: "pendingWithdrawal", type: "uint256" },
@@ -100,6 +137,8 @@ export const darkGameAbi = [
           { name: "winner", type: "address" },
           { name: "playerOneHandDealt", type: "bool" },
           { name: "playerTwoHandDealt", type: "bool" },
+          { name: "playerOneShuffleReady", type: "bool" },
+          { name: "playerTwoShuffleReady", type: "bool" },
           { name: "currentBet", type: "uint256" },
           { name: "playerOneRoundStake", type: "uint256" },
           { name: "playerTwoRoundStake", type: "uint256" },
@@ -146,6 +185,25 @@ export const darkGameAbi = [
       { name: "gameId", type: "uint256" },
       { name: "winnerSeatCode", type: "uint8" },
       { name: "signature", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "submitShuffleEntropy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "gameId", type: "uint256" },
+      {
+        name: "encryptedEntropy",
+        type: "tuple[4]",
+        components: [
+          { name: "ctHash", type: "uint256" },
+          { name: "securityZone", type: "uint8" },
+          { name: "utype", type: "uint8" },
+          { name: "signature", type: "bytes" },
+        ],
+      },
     ],
     outputs: [],
   },

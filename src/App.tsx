@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import {
   AlertTriangle,
   BadgeCheck,
@@ -22,12 +22,14 @@ import {
   createWalletClient,
   custom,
   formatEther,
+  parseEventLogs,
   http,
   parseEther,
   zeroAddress,
   type Address,
   type EIP1193Provider,
   type PublicClient,
+  type TransactionReceipt,
   type WalletClient,
 } from "viem";
 import { configuredChain } from "./lib/chains";
@@ -44,6 +46,17 @@ const publicClient = createPublicClient({
       : import.meta.env.VITE_SEPOLIA_RPC_URL
   ),
 });
+const gasLimits = {
+  createGame: 350_000n,
+  joinGame: 350_000n,
+  submitShuffleEntropy: 1_200_000n,
+  dealHands: 10_000_000n,
+  act: 650_000n,
+  cancelOpenGame: 250_000n,
+  claimTimeout: 450_000n,
+  settleEncryptedWinner: 800_000n,
+  withdraw: 150_000n,
+} as const;
 
 async function loadCofhe() {
   const [{ cofheClient }, sdk] = await Promise.all([
@@ -54,6 +67,7 @@ async function loadCofhe() {
   return {
     cofheClient,
     FheTypes: sdk.FheTypes,
+    Encryptable: sdk.Encryptable,
   };
 }
 
@@ -72,6 +86,8 @@ type Game = {
   winner: Address;
   playerOneHandDealt: boolean;
   playerTwoHandDealt: boolean;
+  playerOneShuffleReady: boolean;
+  playerTwoShuffleReady: boolean;
   currentBet: bigint;
   playerOneRoundStake: bigint;
   playerTwoRoundStake: bigint;
@@ -85,12 +101,25 @@ type PlayerState = {
   acted: boolean;
   folded: boolean;
   handDealt: boolean;
+  shuffleReady: boolean;
   committed: bigint;
   roundStake: bigint;
   pendingWithdrawal: bigint;
 };
 
 type FheHandle = `0x${string}`;
+type EncryptedUint8Input = {
+  ctHash: bigint;
+  securityZone: number;
+  utype: number;
+  signature: `0x${string}`;
+};
+type ShuffleEntropyInput = readonly [
+  EncryptedUint8Input,
+  EncryptedUint8Input,
+  EncryptedUint8Input,
+  EncryptedUint8Input,
+];
 
 type Toast = {
   tone: "info" | "success" | "error";
@@ -107,6 +136,7 @@ const statusLabels: GameStatus[] = [
 ];
 
 const actionLabels = ["Check", "Bet", "Call", "Fold"] as const;
+const shuffleShareModuli = [52, 51, 50, 49] as const;
 
 function isUsableAddress(value?: Address) {
   return Boolean(value && value !== zeroAddress);
@@ -127,6 +157,43 @@ function gamePriority(game: Game) {
   if (game.status === 4) return 3;
   if (game.status === 5) return 4;
   return 5;
+}
+
+function sortGames(games: Game[]) {
+  return [...games].sort((left, right) => {
+    const priorityDelta = gamePriority(left) - gamePriority(right);
+    if (priorityDelta !== 0) return priorityDelta;
+    return Number(right.id - left.id);
+  });
+}
+
+function upsertGame(games: Game[], nextGame: Game) {
+  return sortGames([...games.filter((game) => game.id !== nextGame.id), nextGame]);
+}
+
+function routeGameId(route: AppRoute) {
+  return route.page === "room" || route.page === "game" ? route.gameId : undefined;
+}
+
+function randomShareBelow(modulo: number) {
+  const crypto = globalThis.crypto;
+  if (!crypto?.getRandomValues) {
+    throw new Error("Secure browser randomness is unavailable.");
+  }
+
+  const bytes = new Uint8Array(1);
+  const limit = Math.floor(256 / modulo) * modulo;
+  let value = 0;
+  do {
+    crypto.getRandomValues(bytes);
+    value = bytes[0];
+  } while (value >= limit);
+
+  return BigInt(value % modulo);
+}
+
+function createShuffleShares() {
+  return shuffleShareModuli.map((modulo) => randomShareBelow(modulo));
 }
 
 function formatTimer(seconds: number) {
@@ -154,9 +221,77 @@ function CardFace({ card }: { card: DisplayCard }) {
   );
 }
 
+type RoutePage = "home" | "lobby" | "room" | "game" | "protocol";
+
+type AppRoute = {
+  page: RoutePage;
+  gameId?: bigint;
+};
+
+const navItems: Array<{ label: string; path: string; page: RoutePage }> = [
+  { label: "Home", path: "/", page: "home" },
+  { label: "Lobby", path: "/lobby", page: "lobby" },
+  { label: "Protocol", path: "/protocol", page: "protocol" },
+];
+
+function parsePositiveBigInt(value?: string) {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const parsed = BigInt(value);
+  return parsed > 0n ? parsed : undefined;
+}
+
+function parseAppRoute(pathname: string): AppRoute {
+  const segments = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+  const [first, second] = segments;
+
+  if (first === "lobby") return { page: "lobby" };
+  if (first === "room") {
+    return { page: "room", gameId: segments.length === 2 ? parsePositiveBigInt(second) : undefined };
+  }
+  if (first === "game") {
+    return { page: "game", gameId: segments.length === 2 ? parsePositiveBigInt(second) : undefined };
+  }
+  if (first === "protocol") return { page: "protocol" };
+  return { page: "home" };
+}
+
+function routeTitle(route: AppRoute) {
+  if (route.page === "lobby") return "DarkGame Lobby";
+  if (route.page === "room") return route.gameId ? `DarkGame Room #${route.gameId}` : "DarkGame Room";
+  if (route.page === "game") return route.gameId ? `DarkGame Table #${route.gameId}` : "DarkGame Table";
+  if (route.page === "protocol") return "DarkGame Protocol";
+  return "DarkGame";
+}
+
+async function waitForSuccessfulReceipt(
+  client: PublicClient,
+  hash: `0x${string}`,
+  label: string
+): Promise<TransactionReceipt> {
+  const receipt = await client.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") {
+    throw new Error(`${label} reverted on-chain.`);
+  }
+  return receipt;
+}
+
+function gameCreatedIdFromReceipt(receipt: TransactionReceipt) {
+  try {
+    const [created] = parseEventLogs({
+      abi: darkGameAbi,
+      eventName: "GameCreated",
+      logs: receipt.logs,
+    });
+    return created?.args.gameId;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<bigint | null>(null);
+  const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
   const [buyIn, setBuyIn] = useState("0.0005");
   const [actionStake, setActionStake] = useState("0.0001");
   const [joinId, setJoinId] = useState("");
@@ -171,10 +306,19 @@ export default function App() {
   const [chainId, setChainId] = useState<number>();
   const [walletClient, setWalletClient] = useState<WalletClient>();
   const [connecting, setConnecting] = useState(false);
+  const routeRequiresGame = route.page === "room" || route.page === "game";
 
   const selectedGame = useMemo(
-    () => games.find((game) => game.id === selectedGameId) ?? games[0],
-    [games, selectedGameId]
+    () => {
+      if (routeRequiresGame) {
+        return route.gameId ? games.find((game) => game.id === route.gameId) : undefined;
+      }
+      const matchedGame = selectedGameId
+        ? games.find((game) => game.id === selectedGameId)
+        : undefined;
+      return matchedGame ?? games[0];
+    },
+    [games, route.gameId, routeRequiresGame, selectedGameId]
   );
 
   const isContractReady = isUsableAddress(contractAddress);
@@ -188,9 +332,11 @@ export default function App() {
 
   const statusLabel =
     selectedGame?.status === 2 && selectedGame.handCount < 2
-      ? "Dealing"
+      ? selectedGame.playerOneShuffleReady && selectedGame.playerTwoShuffleReady
+        ? "Dealing"
+        : "Shuffling"
       : selectedGame
-        ? statusLabels[selectedGame.status]
+        ? statusLabels[selectedGame.status] ?? "Unknown"
         : "None";
   const needsNetwork = isConnected && chainId !== requiredChain.id;
   const playerHandDealt =
@@ -199,6 +345,15 @@ export default function App() {
         ? selectedGame.playerOneHandDealt
         : selectedGame.playerTwoHandDealt
       : false;
+  const playerShuffleReady =
+    selectedGame && playerSeat !== null
+      ? playerSeat === 0
+        ? selectedGame.playerOneShuffleReady
+        : selectedGame.playerTwoShuffleReady
+      : false;
+  const allShuffleReady = Boolean(
+    selectedGame?.playerOneShuffleReady && selectedGame.playerTwoShuffleReady
+  );
   const playerRoundStake =
     selectedGame && playerSeat !== null
       ? playerSeat === 0
@@ -229,10 +384,14 @@ export default function App() {
   const tablePrompt = (() => {
     if (!selectedGame) return "Choose a table";
     if (selectedGame.status === 1) return "Waiting for seat 2";
+    if (selectedGame.status === 2 && selectedGame.handCount === 0 && !allShuffleReady) {
+      return "Submit encrypted shuffle";
+    }
     if (selectedGame.status === 2 && selectedGame.handCount === 0) return "Ready to deal";
     if (selectedGame.status === 2 && playerSeat === selectedGame.turn) return "Your turn";
     if (selectedGame.status === 2) return `Seat ${selectedGame.turn + 1} to act`;
-    if (selectedGame.status === 3) return "Reveal winner";
+    if (selectedGame.status === 3) return "Settle or timeout";
+    if (selectedGame.status === 4 && selectedGame.winner === zeroAddress) return "Split pot";
     if (selectedGame.status === 4) return "Finished";
     if (selectedGame.status === 5) return "Cancelled";
     return statusLabel;
@@ -243,6 +402,50 @@ export default function App() {
     window.setTimeout(() => setToast(null), 4600);
   }, []);
 
+  const clearPrivateView = useCallback(() => {
+    setHand(null);
+    setScore(null);
+  }, []);
+
+  const navigate = useCallback((pathname: string) => {
+    const nextRoute = parseAppRoute(pathname);
+    if (routeGameId(nextRoute) !== routeGameId(route)) {
+      clearPrivateView();
+    }
+    if (window.location.pathname !== pathname) {
+      window.history.pushState(null, "", pathname);
+    }
+    setRoute(nextRoute);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [clearPrivateView, route]);
+
+  const handleRouteClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>, pathname: string) => {
+      event.preventDefault();
+      navigate(pathname);
+    },
+    [navigate]
+  );
+
+  useEffect(() => {
+    const onPopState = () => {
+      const nextRoute = parseAppRoute(window.location.pathname);
+      setRoute((currentRoute) => {
+        if (routeGameId(nextRoute) !== routeGameId(currentRoute)) {
+          clearPrivateView();
+        }
+        return nextRoute;
+      });
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [clearPrivateView]);
+
+  useEffect(() => {
+    document.title = routeTitle(route);
+    if (route.gameId) setSelectedGameId(route.gameId);
+  }, [route]);
+
   const hydrateWallet = useCallback(async (provider: EIP1193Provider, requestedAccounts?: Address[]) => {
     const accounts =
       requestedAccounts ??
@@ -251,12 +454,18 @@ export default function App() {
     const chainHex = (await provider.request({ method: "eth_chainId" })) as string;
 
     if (!activeAddress) {
+      clearPrivateView();
       setAddress(undefined);
       setWalletClient(undefined);
       return;
     }
 
-    setAddress(activeAddress);
+    setAddress((currentAddress) => {
+      if (currentAddress?.toLowerCase() !== activeAddress.toLowerCase()) {
+        clearPrivateView();
+      }
+      return activeAddress;
+    });
     setChainId(Number(chainHex));
     setWalletClient(
       createWalletClient({
@@ -265,7 +474,7 @@ export default function App() {
         transport: custom(provider),
       })
     );
-  }, []);
+  }, [clearPrivateView]);
 
   useEffect(() => {
     const provider = window.ethereum;
@@ -277,6 +486,7 @@ export default function App() {
       void hydrateWallet(provider, accounts as Address[]);
     };
     const onChainChanged = (chain: unknown) => {
+      clearPrivateView();
       setChainId(Number(chain as string));
       void hydrateWallet(provider);
     };
@@ -370,16 +580,31 @@ export default function App() {
     walletClient,
   ]);
 
-  const connectCofhe = useCallback(async () => {
+  const connectCofhe = useCallback(async (options: { permit?: boolean } = {}) => {
     const clients = await ensureWallet();
     const cofhe = await loadCofhe();
     await cofhe.cofheClient.connect(
       clients.publicClient as never,
       clients.walletClient as never
     );
-    await cofhe.cofheClient.permits.getOrCreateSelfPermit();
+    if (options.permit !== false) {
+      await cofhe.cofheClient.permits.getOrCreateSelfPermit();
+    }
     return { ...clients, ...cofhe };
   }, [ensureWallet]);
+
+  const readPublicGame = useCallback(async (gameId: bigint) => {
+    if (!isContractReady || !contractAddress) {
+      throw new Error("Set VITE_DARKGAME_ADDRESS to a deployed DarkGame contract.");
+    }
+
+    return publicClient.readContract({
+      address: contractAddress,
+      abi: darkGameAbi,
+      functionName: "getPublicGame",
+      args: [gameId],
+    }) as Promise<Game>;
+  }, [isContractReady]);
 
   const refreshGames = useCallback(async (preferredGameId?: bigint, silent = false) => {
     if (!isContractReady || !contractAddress) return;
@@ -392,31 +617,27 @@ export default function App() {
         functionName: "nextGameId",
       })) as bigint;
 
-      const ids = Array.from({ length: Math.max(Number(nextId - 1n), 0) }, (_, index) => BigInt(index + 1))
-        .reverse()
-        .slice(0, 12);
-
-      const loaded = await Promise.all(
-        ids.map((id) =>
-          publicClient.readContract({
-            address: contractAddress,
-            abi: darkGameAbi,
-            functionName: "getPublicGame",
-            args: [id],
-          }) as Promise<Game>
-        )
+      const latestIds: bigint[] = [];
+      for (let id = nextId - 1n; id > 0n && latestIds.length < 12; id -= 1n) {
+        latestIds.push(id);
+      }
+      const pinnedIds = [preferredGameId, route.gameId].filter(
+        (id): id is bigint => Boolean(id && id > 0n && id < nextId)
+      );
+      const ids = Array.from(new Set([...pinnedIds, ...latestIds].map((id) => id.toString()))).map((id) =>
+        BigInt(id)
       );
 
-      const sorted = [...loaded].sort((left, right) => {
-        const priorityDelta = gamePriority(left) - gamePriority(right);
-        if (priorityDelta !== 0) return priorityDelta;
-        return Number(right.id - left.id);
-      });
+      const loaded = await Promise.all(ids.map((id) => readPublicGame(id)));
+      const sorted = sortGames(loaded);
 
       setGames(sorted);
       setSelectedGameId((current) => {
         if (preferredGameId && sorted.some((game) => game.id === preferredGameId)) {
           return preferredGameId;
+        }
+        if (route.gameId) {
+          return route.gameId;
         }
         if (current && sorted.some((game) => game.id === current)) {
           return current;
@@ -428,7 +649,7 @@ export default function App() {
     } finally {
       if (!silent) setBusy(null);
     }
-  }, [isContractReady, notify]);
+  }, [isContractReady, notify, readPublicGame, route.gameId]);
 
   const refreshWalletState = useCallback(async () => {
     if (!isContractReady || !contractAddress || !address) {
@@ -486,17 +707,20 @@ export default function App() {
   async function runTx(
     label: string,
     tx: (clients: Awaited<ReturnType<typeof ensureWallet>>) => Promise<`0x${string}`>,
-    preferredGameId?: bigint
+    preferredGameId?: bigint,
+    onConfirmed?: (receipt: TransactionReceipt) => bigint | void | Promise<bigint | void>
   ) {
     setBusy(label);
     try {
       const clients = await ensureWallet();
       const hash = await tx(clients);
-      await clients.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await waitForSuccessfulReceipt(clients.publicClient, hash, label);
+      const confirmedGameId = await onConfirmed?.(receipt);
+      const refreshGameId = typeof confirmedGameId === "bigint" ? confirmedGameId : preferredGameId;
       notify({ tone: "success", text: `${label} confirmed.` });
       setHand(null);
       setScore(null);
-      await refreshGames(preferredGameId);
+      await refreshGames(refreshGameId);
       await refreshWalletState();
     } catch (error) {
       notify({ tone: "error", text: error instanceof Error ? error.message : `${label} failed.` });
@@ -511,10 +735,22 @@ export default function App() {
       notify({ tone: "error", text: "Enter a valid buy-in amount." });
       return;
     }
-    const expectedGameId =
+    let expectedGameId =
       games.length > 0
         ? games.reduce((highest, game) => (game.id > highest ? game.id : highest), 0n) + 1n
-        : undefined;
+        : 1n;
+
+    if (isContractReady && contractAddress) {
+      try {
+        expectedGameId = (await publicClient.readContract({
+          address: contractAddress,
+          abi: darkGameAbi,
+          functionName: "nextGameId",
+        })) as bigint;
+      } catch {
+        // Keep the optimistic local id; the transaction result will still refresh the lobby.
+      }
+    }
 
     await runTx(
       "Create table",
@@ -525,10 +761,16 @@ export default function App() {
           functionName: "createGame",
           args: [value],
           value,
+          gas: gasLimits.createGame,
           account: clients.account,
           chain: requiredChain,
         }),
-      expectedGameId
+      expectedGameId,
+      (receipt) => {
+        const createdGameId = gameCreatedIdFromReceipt(receipt) ?? expectedGameId;
+        navigate(`/room/${createdGameId.toString()}`);
+        return createdGameId;
+      }
     );
   }
 
@@ -539,13 +781,27 @@ export default function App() {
       return;
     }
 
-    const game = games.find((item) => item.id === BigInt(normalizedId));
+    const requestedGameId = BigInt(normalizedId);
+    let game = games.find((item) => item.id === requestedGameId);
     if (!game) {
-      notify({ tone: "error", text: "Load the table before joining." });
-      return;
+      setBusy("Loading table");
+      try {
+        game = await readPublicGame(requestedGameId);
+        setGames((currentGames) => upsertGame(currentGames, game as Game));
+        setSelectedGameId(game.id);
+      } catch {
+        notify({ tone: "error", text: "That table was not found on-chain." });
+        return;
+      } finally {
+        setBusy(null);
+      }
     }
     if (game.status !== 1) {
       notify({ tone: "error", text: "That table is not open for joining." });
+      return;
+    }
+    if (address && game.playerOne.toLowerCase() === address.toLowerCase()) {
+      notify({ tone: "error", text: "Use a second wallet to join this table." });
       return;
     }
 
@@ -556,10 +812,15 @@ export default function App() {
         functionName: "joinGame",
         args: [game.id],
         value: game.buyIn,
+        gas: gasLimits.joinGame,
         account: clients.account,
         chain: requiredChain,
       }),
-      game.id
+      game.id,
+      () => {
+        navigate(`/game/${game.id.toString()}`);
+        return game.id;
+      }
     );
   }
 
@@ -586,11 +847,45 @@ export default function App() {
         functionName: "act",
         args: [selectedGame.id, action],
         value,
+        gas: gasLimits.act,
         account: clients.account,
         chain: requiredChain,
       }),
       selectedGame.id
     );
+  }
+
+  async function submitShuffleEntropy() {
+    if (!selectedGame) return;
+
+    setBusy("Encrypting shuffle");
+    try {
+      const clients = await connectCofhe({ permit: false });
+      const shares = createShuffleShares();
+      const encryptedEntropy = (await clients.cofheClient
+        .encryptInputs(shares.map((share) => clients.Encryptable.uint8(share)))
+        .execute()) as unknown as ShuffleEntropyInput;
+
+      const hash = await clients.walletClient.writeContract({
+        address: clients.contractAddress,
+        abi: darkGameAbi,
+        functionName: "submitShuffleEntropy",
+        args: [selectedGame.id, encryptedEntropy],
+        gas: gasLimits.submitShuffleEntropy,
+        account: clients.account,
+        chain: requiredChain,
+      });
+
+      await waitForSuccessfulReceipt(clients.publicClient, hash, "Submit shuffle");
+      notify({ tone: "success", text: "Encrypted shuffle submitted." });
+      clearPrivateView();
+      await refreshGames(selectedGame.id);
+      await refreshWalletState();
+    } catch (error) {
+      notify({ tone: "error", text: error instanceof Error ? error.message : "Unable to submit shuffle." });
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function dealHand() {
@@ -601,6 +896,7 @@ export default function App() {
         abi: darkGameAbi,
         functionName: "dealHands",
         args: [selectedGame.id],
+        gas: gasLimits.dealHands,
         account: clients.account,
         chain: requiredChain,
       }),
@@ -616,6 +912,7 @@ export default function App() {
         abi: darkGameAbi,
         functionName: "cancelOpenGame",
         args: [selectedGame.id],
+        gas: gasLimits.cancelOpenGame,
         account: clients.account,
         chain: requiredChain,
       }),
@@ -631,6 +928,7 @@ export default function App() {
         abi: darkGameAbi,
         functionName: "claimTimeout",
         args: [selectedGame.id],
+        gas: gasLimits.claimTimeout,
         account: clients.account,
         chain: requiredChain,
       }),
@@ -644,6 +942,7 @@ export default function App() {
         address: clients.contractAddress,
         abi: darkGameAbi,
         functionName: "withdraw",
+        gas: gasLimits.withdraw,
         account: clients.account,
         chain: requiredChain,
       })
@@ -655,7 +954,7 @@ export default function App() {
 
     try {
       setBusy("Decrypting hand");
-      const clients = await connectCofhe();
+      const clients = await connectCofhe({ permit: true });
       const [cardAHandle, cardBHandle] = (await clients.publicClient.readContract({
         address: contractAddress,
         abi: darkGameAbi,
@@ -692,7 +991,7 @@ export default function App() {
     if (!selectedGame || !contractAddress) return;
 
     try {
-      const clients = await connectCofhe();
+      const clients = await connectCofhe({ permit: false });
       setBusy("Settling winner");
       const winnerHandle = (await publicClient.readContract({
         address: contractAddress,
@@ -715,11 +1014,12 @@ export default function App() {
           Number(decryptResult.decryptedValue),
           decryptResult.signature as `0x${string}`,
         ],
+        gas: gasLimits.settleEncryptedWinner,
         account: clients.account,
         chain: requiredChain,
       });
 
-      await clients.publicClient.waitForTransactionReceipt({ hash });
+      await waitForSuccessfulReceipt(clients.publicClient, hash, "Settle winner");
       notify({ tone: "success", text: "Winner settled on-chain." });
       await refreshGames();
       await refreshWalletState();
@@ -730,19 +1030,36 @@ export default function App() {
     }
   }
 
-  const canDeal = selectedGame?.status === 2 && playerSeat !== null && selectedGame.handCount === 0;
-  const canAct = selectedGame?.status === 2 && selectedGame.handCount === 2 && playerSeat === selectedGame.turn;
+  const canUseContract = isContractReady && isConnected && !needsNetwork;
+  const canSubmitShuffle =
+    canUseContract &&
+    selectedGame?.status === 2 &&
+    selectedGame.handCount === 0 &&
+    playerSeat !== null &&
+    !playerShuffleReady;
+  const canDeal =
+    canUseContract &&
+    selectedGame?.status === 2 &&
+    playerSeat !== null &&
+    selectedGame.handCount === 0 &&
+    allShuffleReady;
+  const canAct =
+    canUseContract &&
+    selectedGame?.status === 2 &&
+    selectedGame.handCount === 2 &&
+    playerSeat === selectedGame.turn;
   const canCheck = canAct && owedToCall === 0n;
   const canBet = canAct && owedToCall === 0n;
   const canCall = canAct && owedToCall > 0n;
   const canFold = canAct;
-  const canReveal = playerSeat !== null && playerHandDealt;
-  const canSettle = selectedGame?.status === 3;
+  const canReveal = canUseContract && playerSeat !== null && playerHandDealt;
+  const canSettle = canUseContract && selectedGame?.status === 3;
   const canTimeout = Boolean(
+    canUseContract &&
     selectedGame &&
-    (selectedGame.status === 2 || selectedGame.status === 3) &&
-    selectedGame.deadline > 0n &&
-    secondsLeft === 0
+      (selectedGame.status === 2 || selectedGame.status === 3) &&
+      selectedGame.deadline > 0n &&
+      secondsLeft === 0
   );
   const canWithdraw = pendingWithdrawal > 0n;
   const canCancel =
@@ -750,18 +1067,599 @@ export default function App() {
     address &&
     selectedGame.playerOne.toLowerCase() === address.toLowerCase();
 
+  const openTableCount = games.filter((game) => game.status === 1).length;
+  const activeTableCount = games.filter((game) => game.status === 2 || game.status === 3).length;
+  const finishedTableCount = games.filter((game) => game.status === 4).length;
+  const selectedGamePath = selectedGame ? `/game/${selectedGame.id.toString()}` : "/lobby";
+  const isSelectedCreator =
+    Boolean(
+      selectedGame &&
+        address &&
+        selectedGame.playerOne.toLowerCase() === address.toLowerCase()
+    );
+  const canJoinSelectedRoom =
+    Boolean(selectedGame?.status === 1 && isContractReady && isConnected && !needsNetwork && !isSelectedCreator);
+
+  function renderLobbyPanel() {
+    return (
+      <aside className="lobby-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Lobby</span>
+            <h2>Tables</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={() => refreshGames()} title="Refresh tables">
+            <RefreshCw size={17} />
+          </button>
+        </div>
+
+        <div className="create-row">
+          <label>
+            Buy-in
+            <input value={buyIn} onChange={(event) => setBuyIn(event.target.value)} inputMode="decimal" />
+          </label>
+          <button className="primary-button compact" type="button" onClick={createGame} disabled={!canUseContract}>
+            <Plus size={16} />
+            Create
+          </button>
+        </div>
+
+        <div className="join-row">
+          <label>
+            Table ID
+            <input value={joinId} onChange={(event) => setJoinId(event.target.value)} inputMode="numeric" />
+          </label>
+          <button className="ghost-button compact" type="button" onClick={() => joinGame()} disabled={!joinId || !canUseContract}>
+            <LogIn size={16} />
+            Join
+          </button>
+        </div>
+
+        <div className="table-list">
+          {games.length === 0 ? (
+            <div className="empty-state">
+              <Gamepad2 size={24} />
+              <span>No live tables yet</span>
+            </div>
+          ) : (
+            games.map((game) => (
+              <button
+                className={`table-item ${selectedGame?.id === game.id ? "selected" : ""}`}
+                key={game.id.toString()}
+                type="button"
+                onClick={() => {
+                  setSelectedGameId(game.id);
+                  setJoinId(game.status === 1 ? game.id.toString() : "");
+                  setHand(null);
+                  setScore(null);
+                  navigate(`/room/${game.id.toString()}`);
+                }}
+              >
+                <span>#{game.id.toString()}</span>
+                <strong>{statusLabels[game.status]}</strong>
+                <small>
+                  {formatEther(game.buyIn)} ETH
+                  {game.status === 1 ? " · open seat" : ""}
+                </small>
+              </button>
+            ))
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  function renderTableStage() {
+    return (
+      <section className="table-stage">
+        <div className="table-surface">
+          <div className={`opponent-seat seat ${topSeatActive ? "active-seat" : ""}`}>
+            <div>
+              <span>Seat {topSeat + 1}</span>
+              <strong>{shortAddress(topSeatAddress)}</strong>
+            </div>
+            {selectedGame?.winner === topSeatAddress && selectedGame?.winner !== zeroAddress && (
+              <Crown size={18} />
+            )}
+          </div>
+
+          <div className="opponent-cards card-row" aria-label="Opponent hand">
+            {topSeatHasCards ? (
+              <>
+                <CardBack label="Opponent hidden card one" />
+                <CardBack label="Opponent hidden card two" />
+              </>
+            ) : (
+              <>
+                <div className="card-slot" />
+                <div className="card-slot" />
+              </>
+            )}
+          </div>
+
+          <div className="pot-core">
+            <div className="chip-stack" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <span className="eyebrow">Pot</span>
+            <strong>{selectedGame ? `${formatEther(selectedGame.pot)} ETH` : "0 ETH"}</strong>
+            <div className={`status-chip status-${statusLabel.toLowerCase()}`}>{statusLabel}</div>
+          </div>
+
+          <div className="table-message">
+            <span>{tablePrompt}</span>
+            {Boolean(selectedGame?.deadline && selectedGame.deadline > 0n) && (
+              <strong>
+                <Clock3 size={15} />
+                {formatTimer(secondsLeft)}
+              </strong>
+            )}
+          </div>
+
+          <div className="hand-zone card-row" aria-label="Private hand">
+            {hand ? (
+              hand.map((card, index) => <CardFace card={card} key={`${card.rank}-${card.suit}-${index}`} />)
+            ) : playerHasCards ? (
+              <>
+                <CardBack label="Private hidden card one" />
+                <CardBack label="Private hidden card two" />
+              </>
+            ) : (
+              <>
+                <div className="card-slot" />
+                <div className="card-slot" />
+              </>
+            )}
+          </div>
+
+          <div className={`player-seat seat ${bottomSeatActive ? "active-seat" : ""}`}>
+            <div>
+              <span>{bottomSeatNumber === null ? "Spectator" : `Seat ${bottomSeatNumber}`}</span>
+              <strong>{shortAddress(address)}</strong>
+            </div>
+            {selectedGame?.winner === address && selectedGame?.winner !== zeroAddress && (
+              <Crown size={18} />
+            )}
+          </div>
+        </div>
+
+        <div className="control-dock">
+          <label className="action-stake">
+            Bet
+            <input value={actionStake} onChange={(event) => setActionStake(event.target.value)} inputMode="decimal" />
+          </label>
+          <button className="primary-button" type="button" onClick={dealHand} disabled={!canDeal}>
+            <Shield size={17} />
+            Deal Cards
+          </button>
+          <button className="ghost-button" type="button" onClick={submitShuffleEntropy} disabled={!canSubmitShuffle}>
+            <RefreshCw size={17} />
+            Submit Shuffle
+          </button>
+          <button className="ghost-button" type="button" onClick={revealHand} disabled={!canReveal}>
+            <Eye size={17} />
+            Reveal Hand
+          </button>
+          <button className="primary-button" type="button" onClick={() => sendAction(0)} disabled={!canCheck}>
+            Check
+          </button>
+          <button className="primary-button" type="button" onClick={() => sendAction(1)} disabled={!canBet}>
+            Bet
+          </button>
+          <button className="primary-button" type="button" onClick={() => sendAction(2)} disabled={!canCall}>
+            {owedToCall > 0n ? `Call ${formatEther(owedToCall)}` : "Call"}
+          </button>
+          <button className="danger-button" type="button" onClick={() => sendAction(3)} disabled={!canFold}>
+            Fold
+          </button>
+          <button className="settle-button" type="button" onClick={settleWinner} disabled={!canSettle}>
+            <CircleDollarSign size={17} />
+            Settle
+          </button>
+          <button className="ghost-button" type="button" onClick={withdrawPayout} disabled={!canWithdraw}>
+            <CircleDollarSign size={17} />
+            Withdraw
+          </button>
+          <button className="ghost-button" type="button" onClick={claimTimeout} disabled={!canTimeout}>
+            <TimerReset size={17} />
+            Timeout
+          </button>
+          <button className="ghost-button" type="button" onClick={cancelTable} disabled={!canCancel}>
+            <TimerReset size={17} />
+            Cancel
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  function renderInspectorPanel() {
+    return (
+      <aside className="inspector-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">State</span>
+            <h2>On-chain</h2>
+          </div>
+        </div>
+
+        <dl className="stats-list">
+          <div>
+            <dt>Players</dt>
+            <dd>
+              <Users size={15} />
+              {selectedGame?.playerTwo && selectedGame.playerTwo !== zeroAddress ? "2/2" : "1/2"}
+            </dd>
+          </div>
+          <div>
+            <dt>Table</dt>
+            <dd>{selectedGame ? `#${selectedGame.id.toString()}` : "None"}</dd>
+          </div>
+          <div>
+            <dt>Turn</dt>
+            <dd>{selectedGame?.status === 2 ? `Seat ${selectedGame.turn + 1}` : "Closed"}</dd>
+          </div>
+          <div>
+            <dt>Shuffle</dt>
+            <dd>{playerState?.shuffleReady ? "Your share submitted" : `${Number(Boolean(selectedGame?.playerOneShuffleReady)) + Number(Boolean(selectedGame?.playerTwoShuffleReady))}/2`}</dd>
+          </div>
+          <div>
+            <dt>Hands</dt>
+            <dd>{playerState?.handDealt ? "Your hand dealt" : `${selectedGame?.handCount ?? 0}/2`}</dd>
+          </div>
+          <div>
+            <dt>Actions</dt>
+            <dd>{selectedGame?.actionCount ?? 0}</dd>
+          </div>
+          <div>
+            <dt>Current bet</dt>
+            <dd>{selectedGame ? `${formatEther(selectedGame.currentBet)} ETH` : "0 ETH"}</dd>
+          </div>
+          <div>
+            <dt>To call</dt>
+            <dd>{`${formatEther(owedToCall)} ETH`}</dd>
+          </div>
+          <div>
+            <dt>Deadline</dt>
+            <dd>{selectedGame?.deadline && selectedGame.deadline > 0n ? `${secondsLeft}s` : "None"}</dd>
+          </div>
+          <div>
+            <dt>Score</dt>
+            <dd>{score !== null ? score.toString() : "Encrypted"}</dd>
+          </div>
+          <div>
+            <dt>Pending</dt>
+            <dd>{`${formatEther(pendingWithdrawal)} ETH`}</dd>
+          </div>
+          <div>
+            <dt>Winner</dt>
+            <dd>
+              {selectedGame?.status === 4 && selectedGame.winner === zeroAddress ? (
+                "Split pot"
+              ) : selectedGame?.winner && selectedGame.winner !== zeroAddress ? (
+                <>
+                  <Trophy size={15} />
+                  {shortAddress(selectedGame.winner)}
+                </>
+              ) : (
+                "Encrypted"
+              )}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="privacy-stack">
+          <div>
+            <Shield size={18} />
+            <span>Private hand handles are ACL-restricted to seated wallets.</span>
+          </div>
+          <div>
+            <BadgeCheck size={18} />
+            <span>Payouts are pull-based and verified by the encrypted winner proof.</span>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  function renderMissingTable() {
+    return (
+      <section className="missing-page">
+        <Gamepad2 size={30} />
+        <h1>Table not found</h1>
+        <p>The requested room is not in the latest on-chain table window.</p>
+        <button className="primary-button" type="button" onClick={() => navigate("/lobby")}>
+          <Users size={17} />
+          Open Lobby
+        </button>
+      </section>
+    );
+  }
+
+  function renderHomePage() {
+    return (
+      <section className="home-page">
+        <div className="home-hero">
+          <div className="hero-copy">
+            <span className="eyebrow">CoFHE testnet game</span>
+              <h1>Private high-card, settled on-chain.</h1>
+            <p>
+              Create a table, join with a second wallet, decrypt only your hand, and settle the encrypted high-card
+              result through the contract.
+            </p>
+            <div className="hero-actions">
+              <button className="primary-button" type="button" onClick={() => navigate("/lobby")}>
+                <Users size={17} />
+                Open Lobby
+              </button>
+              <button className="ghost-button" type="button" onClick={() => navigate(selectedGamePath)}>
+                <Gamepad2 size={17} />
+                Current Table
+              </button>
+            </div>
+          </div>
+
+          <div className="hero-table" aria-label="DarkGame table preview">
+            <div className="hero-table-felt">
+              <div className="preview-seat top">Seat 1</div>
+              <div className="preview-cards">
+                <CardBack label="Encrypted preview card one" />
+                <CardBack label="Encrypted preview card two" />
+              </div>
+              <div className="preview-pot">
+                <span>Live pot</span>
+                <strong>{selectedGame ? `${formatEther(selectedGame.pot)} ETH` : "0 ETH"}</strong>
+              </div>
+              <div className="preview-seat bottom">Seat 2</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="home-stats">
+          <div>
+            <span>Open</span>
+            <strong>{openTableCount}</strong>
+          </div>
+          <div>
+            <span>Active</span>
+            <strong>{activeTableCount}</strong>
+          </div>
+          <div>
+            <span>Finished</span>
+            <strong>{finishedTableCount}</strong>
+          </div>
+          <div>
+            <span>Contract</span>
+            <strong>{shortAddress(contractAddress)}</strong>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function renderLobbyPage() {
+    return (
+      <section className="lobby-page page-grid">
+        {renderLobbyPanel()}
+        <section className="page-panel directory-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">Rooms</span>
+              <h2>On-chain directory</h2>
+            </div>
+            <div className="status-chip status-active">{games.length} loaded</div>
+          </div>
+
+          <div className="room-list">
+            {games.length === 0 ? (
+              <div className="empty-state">
+                <Shield size={24} />
+                <span>Create the first testnet table</span>
+              </div>
+            ) : (
+              games.map((game) => (
+                <article className="room-row" key={game.id.toString()}>
+                  <div>
+                    <span className="eyebrow">Table #{game.id.toString()}</span>
+                    <h3>{statusLabels[game.status]}</h3>
+                    <p>
+                      {formatEther(game.buyIn)} ETH buy-in · pot {formatEther(game.pot)} ETH
+                    </p>
+                  </div>
+                  <div className="room-row-actions">
+                    <button className="ghost-button compact" type="button" onClick={() => navigate(`/room/${game.id}`)}>
+                      Room
+                    </button>
+                    <button className="primary-button compact" type="button" onClick={() => navigate(`/game/${game.id}`)}>
+                      Play
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </section>
+    );
+  }
+
+  function renderRoomPage() {
+    if (!selectedGame) return renderMissingTable();
+
+    return (
+      <section className="room-page page-grid">
+        <section className="page-panel room-brief">
+          <div className="panel-heading">
+            <div>
+              <span className="eyebrow">Room #{selectedGame.id.toString()}</span>
+              <h2>{statusLabel}</h2>
+            </div>
+            <div className={`status-chip status-${statusLabel.toLowerCase()}`}>{statusLabel}</div>
+          </div>
+
+          <div className="room-summary-grid">
+            <div>
+              <span>Buy-in</span>
+              <strong>{formatEther(selectedGame.buyIn)} ETH</strong>
+            </div>
+            <div>
+              <span>Pot</span>
+              <strong>{formatEther(selectedGame.pot)} ETH</strong>
+            </div>
+            <div>
+              <span>Current bet</span>
+              <strong>{formatEther(selectedGame.currentBet)} ETH</strong>
+            </div>
+            <div>
+              <span>Deadline</span>
+              <strong>{selectedGame.deadline > 0n ? formatTimer(secondsLeft) : "None"}</strong>
+            </div>
+          </div>
+
+          <div className="seat-grid">
+            <div className={`seat-card ${playerSeat === 0 ? "is-you" : ""}`}>
+              <span>Seat 1</span>
+              <strong>{shortAddress(selectedGame.playerOne)}</strong>
+              <small>
+                {selectedGame.playerOneHandDealt
+                  ? "Hand dealt"
+                  : selectedGame.playerOneShuffleReady
+                    ? "Shuffle ready"
+                    : "Waiting"}
+              </small>
+            </div>
+            <div className={`seat-card ${playerSeat === 1 ? "is-you" : ""}`}>
+              <span>Seat 2</span>
+              <strong>{shortAddress(selectedGame.playerTwo)}</strong>
+              <small>
+                {selectedGame.playerTwoHandDealt
+                  ? "Hand dealt"
+                  : selectedGame.playerTwoShuffleReady
+                    ? "Shuffle ready"
+                    : "Open"}
+              </small>
+            </div>
+          </div>
+
+          <div className="room-actions">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => joinGame(selectedGame.id.toString())}
+              disabled={!canJoinSelectedRoom}
+            >
+              <LogIn size={17} />
+              Join Room
+            </button>
+            <button className="ghost-button" type="button" onClick={() => navigate(selectedGamePath)}>
+              <Gamepad2 size={17} />
+              Open Table
+            </button>
+            <button className="ghost-button" type="button" onClick={withdrawPayout} disabled={!canWithdraw}>
+              <CircleDollarSign size={17} />
+              Withdraw
+            </button>
+          </div>
+        </section>
+
+        {renderInspectorPanel()}
+      </section>
+    );
+  }
+
+  function renderGamePage() {
+    if (!selectedGame) return renderMissingTable();
+
+    return (
+      <section className="game-page">
+        {renderTableStage()}
+        {renderInspectorPanel()}
+      </section>
+    );
+  }
+
+  function renderProtocolPage() {
+    return (
+      <section className="protocol-page">
+        <section className="page-panel protocol-hero">
+          <span className="eyebrow">Protocol</span>
+          <h1>Encrypted state, public settlement.</h1>
+          <p>
+            DarkGame keeps private hands behind CoFHE ACLs, combines encrypted shuffle shares, and reveals only the
+            final high-card winner code for proof-backed settlement.
+          </p>
+        </section>
+
+        <section className="protocol-grid">
+          <article className="protocol-card">
+            <Shield size={22} />
+            <h3>Private hands</h3>
+            <p>Card handles are allowed to the contract and the seated wallet only.</p>
+          </article>
+          <article className="protocol-card">
+            <Eye size={22} />
+            <h3>Local reveal</h3>
+            <p>`decryptForView` renders a player hand without publishing the cards.</p>
+          </article>
+          <article className="protocol-card">
+            <BadgeCheck size={22} />
+            <h3>Verified winner</h3>
+            <p>`decryptForTx` returns a signature checked by `FHE.verifyDecryptResult`, including split-pot ties.</p>
+          </article>
+          <article className="protocol-card">
+            <CircleDollarSign size={22} />
+            <h3>Pull payouts</h3>
+            <p>Winners withdraw queued balances instead of receiving pushed transfers.</p>
+          </article>
+        </section>
+
+        <section className="page-panel production-note">
+          <h2>Production note</h2>
+          <p>
+            The deployed contract uses bounded two-party encrypted shuffle shares, no-duplicate high-card dealing,
+            exact on-chain betting, proof-backed settlement, reveal timeout recovery, and pull withdrawals.
+          </p>
+        </section>
+      </section>
+    );
+  }
+
   return (
-    <main className="app-shell">
-      <section className="topbar">
-        <div className="brand">
+    <main className={`app-shell route-${route.page}`}>
+      <header className="topbar">
+        <a className="brand" href="/" onClick={(event) => handleRouteClick(event, "/")}>
           <div className="brand-mark">
             <Shield size={22} />
           </div>
           <div>
             <p>DarkGame</p>
-            <span>Encrypted heads-up poker</span>
+            <span>Encrypted high-card table</span>
           </div>
-        </div>
+        </a>
+
+        <nav className="app-nav" aria-label="Primary">
+          {navItems.map((item) => (
+            <a
+              aria-current={route.page === item.page ? "page" : undefined}
+              className={route.page === item.page ? "active" : ""}
+              href={item.path}
+              key={item.path}
+              onClick={(event) => handleRouteClick(event, item.path)}
+            >
+              {item.label}
+            </a>
+          ))}
+          <a
+            aria-current={route.page === "game" ? "page" : undefined}
+            className={route.page === "game" ? "active" : ""}
+            href={selectedGamePath}
+            onClick={(event) => handleRouteClick(event, selectedGamePath)}
+          >
+            Game
+          </a>
+        </nav>
 
         <div className="wallet-strip">
           <div className="network-pill">
@@ -784,6 +1682,7 @@ export default function App() {
                 className="icon-button"
                 type="button"
                 onClick={() => {
+                  clearPrivateView();
                   setAddress(undefined);
                   setWalletClient(undefined);
                 }}
@@ -805,7 +1704,7 @@ export default function App() {
             </button>
           )}
         </div>
-      </section>
+      </header>
 
       {!isContractReady && (
         <section className="warning-band">
@@ -814,268 +1713,11 @@ export default function App() {
         </section>
       )}
 
-      <section className="game-layout">
-        <aside className="lobby-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="eyebrow">Lobby</span>
-              <h2>Tables</h2>
-            </div>
-            <button className="icon-button" type="button" onClick={() => refreshGames()} title="Refresh tables">
-              <RefreshCw size={17} />
-            </button>
-          </div>
-
-          <div className="create-row">
-            <label>
-              Buy-in
-              <input value={buyIn} onChange={(event) => setBuyIn(event.target.value)} inputMode="decimal" />
-            </label>
-            <button className="primary-button compact" type="button" onClick={createGame} disabled={!isContractReady}>
-              <Plus size={16} />
-              Create
-            </button>
-          </div>
-
-          <div className="join-row">
-            <label>
-              Table ID
-              <input value={joinId} onChange={(event) => setJoinId(event.target.value)} inputMode="numeric" />
-            </label>
-            <button className="ghost-button compact" type="button" onClick={() => joinGame()} disabled={!joinId}>
-              <LogIn size={16} />
-              Join
-            </button>
-          </div>
-
-          <div className="table-list">
-            {games.length === 0 ? (
-              <div className="empty-state">
-                <Gamepad2 size={24} />
-                <span>No live tables yet</span>
-              </div>
-            ) : (
-              games.map((game) => (
-                <button
-                  className={`table-item ${selectedGame?.id === game.id ? "selected" : ""}`}
-                  key={game.id.toString()}
-                  type="button"
-                  onClick={() => {
-                    setSelectedGameId(game.id);
-                    setJoinId(game.status === 1 ? game.id.toString() : "");
-                    setHand(null);
-                    setScore(null);
-                  }}
-                >
-                  <span>#{game.id.toString()}</span>
-                  <strong>{statusLabels[game.status]}</strong>
-                  <small>
-                    {formatEther(game.buyIn)} ETH
-                    {game.status === 1 ? " · click then Join" : ""}
-                  </small>
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
-        <section className="table-stage">
-          <div className="table-surface">
-            <div className={`opponent-seat seat ${topSeatActive ? "active-seat" : ""}`}>
-              <div>
-                <span>Seat {topSeat + 1}</span>
-                <strong>{shortAddress(topSeatAddress)}</strong>
-              </div>
-              {selectedGame?.winner === topSeatAddress && selectedGame?.winner !== zeroAddress && (
-                <Crown size={18} />
-              )}
-            </div>
-
-            <div className="opponent-cards card-row" aria-label="Opponent hand">
-              {topSeatHasCards ? (
-                <>
-                  <CardBack label="Opponent hidden card one" />
-                  <CardBack label="Opponent hidden card two" />
-                </>
-              ) : (
-                <>
-                  <div className="card-slot" />
-                  <div className="card-slot" />
-                </>
-              )}
-            </div>
-
-            <div className="pot-core">
-              <div className="chip-stack" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-              <span className="eyebrow">Pot</span>
-              <strong>{selectedGame ? `${formatEther(selectedGame.pot)} ETH` : "0 ETH"}</strong>
-              <div className={`status-chip status-${statusLabel.toLowerCase()}`}>{statusLabel}</div>
-            </div>
-
-            <div className="table-message">
-              <span>{tablePrompt}</span>
-              {Boolean(selectedGame?.deadline && selectedGame.deadline > 0n) && (
-                <strong>
-                  <Clock3 size={15} />
-                  {formatTimer(secondsLeft)}
-                </strong>
-              )}
-            </div>
-
-            <div className="hand-zone card-row" aria-label="Private hand">
-              {hand ? (
-                hand.map((card, index) => <CardFace card={card} key={`${card.rank}-${card.suit}-${index}`} />)
-              ) : playerHasCards ? (
-                <>
-                  <CardBack label="Private hidden card one" />
-                  <CardBack label="Private hidden card two" />
-                </>
-              ) : (
-                <>
-                  <div className="card-slot" />
-                  <div className="card-slot" />
-                </>
-              )}
-            </div>
-
-            <div className={`player-seat seat ${bottomSeatActive ? "active-seat" : ""}`}>
-              <div>
-                <span>{bottomSeatNumber === null ? "Spectator" : `Seat ${bottomSeatNumber}`}</span>
-                <strong>{shortAddress(address)}</strong>
-              </div>
-              {selectedGame?.winner === address && selectedGame?.winner !== zeroAddress && (
-                <Crown size={18} />
-              )}
-            </div>
-          </div>
-
-          <div className="control-dock">
-            <label className="action-stake">
-              Bet
-              <input value={actionStake} onChange={(event) => setActionStake(event.target.value)} inputMode="decimal" />
-            </label>
-            <button className="primary-button" type="button" onClick={dealHand} disabled={!canDeal}>
-              <Shield size={17} />
-              Deal Cards
-            </button>
-            <button className="ghost-button" type="button" onClick={revealHand} disabled={!canReveal}>
-              <Eye size={17} />
-              Reveal Hand
-            </button>
-            <button className="primary-button" type="button" onClick={() => sendAction(0)} disabled={!canCheck}>
-              Check
-            </button>
-            <button className="primary-button" type="button" onClick={() => sendAction(1)} disabled={!canBet}>
-              Bet
-            </button>
-            <button className="primary-button" type="button" onClick={() => sendAction(2)} disabled={!canCall}>
-              {owedToCall > 0n ? `Call ${formatEther(owedToCall)}` : "Call"}
-            </button>
-            <button className="danger-button" type="button" onClick={() => sendAction(3)} disabled={!canFold}>
-              Fold
-            </button>
-            <button className="settle-button" type="button" onClick={settleWinner} disabled={!canSettle}>
-              <CircleDollarSign size={17} />
-              Settle
-            </button>
-            <button className="ghost-button" type="button" onClick={withdrawPayout} disabled={!canWithdraw}>
-              <CircleDollarSign size={17} />
-              Withdraw
-            </button>
-            <button className="ghost-button" type="button" onClick={claimTimeout} disabled={!canTimeout}>
-              <TimerReset size={17} />
-              Timeout
-            </button>
-            <button className="ghost-button" type="button" onClick={cancelTable} disabled={!canCancel}>
-              <TimerReset size={17} />
-              Cancel
-            </button>
-          </div>
-        </section>
-
-        <aside className="inspector-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="eyebrow">State</span>
-              <h2>On-chain</h2>
-            </div>
-          </div>
-
-          <dl className="stats-list">
-            <div>
-              <dt>Players</dt>
-              <dd>
-                <Users size={15} />
-                {selectedGame?.playerTwo && selectedGame.playerTwo !== zeroAddress ? "2/2" : "1/2"}
-              </dd>
-            </div>
-            <div>
-              <dt>Table</dt>
-              <dd>{selectedGame ? `#${selectedGame.id.toString()}` : "None"}</dd>
-            </div>
-            <div>
-              <dt>Turn</dt>
-              <dd>{selectedGame?.status === 2 ? `Seat ${selectedGame.turn + 1}` : "Closed"}</dd>
-            </div>
-            <div>
-              <dt>Hands</dt>
-              <dd>{playerState?.handDealt ? "Your hand dealt" : `${selectedGame?.handCount ?? 0}/2`}</dd>
-            </div>
-            <div>
-              <dt>Actions</dt>
-              <dd>{selectedGame?.actionCount ?? 0}</dd>
-            </div>
-            <div>
-              <dt>Current bet</dt>
-              <dd>{selectedGame ? `${formatEther(selectedGame.currentBet)} ETH` : "0 ETH"}</dd>
-            </div>
-            <div>
-              <dt>To call</dt>
-              <dd>{`${formatEther(owedToCall)} ETH`}</dd>
-            </div>
-            <div>
-              <dt>Deadline</dt>
-              <dd>{selectedGame?.deadline && selectedGame.deadline > 0n ? `${secondsLeft}s` : "None"}</dd>
-            </div>
-            <div>
-              <dt>Score</dt>
-              <dd>{score ? score.toString() : "Encrypted"}</dd>
-            </div>
-            <div>
-              <dt>Pending</dt>
-              <dd>{`${formatEther(pendingWithdrawal)} ETH`}</dd>
-            </div>
-            <div>
-              <dt>Winner</dt>
-              <dd>
-                {selectedGame?.winner && selectedGame.winner !== zeroAddress ? (
-                  <>
-                    <Trophy size={15} />
-                    {shortAddress(selectedGame.winner)}
-                  </>
-                ) : (
-                  "Encrypted"
-                )}
-              </dd>
-            </div>
-          </dl>
-
-          <div className="privacy-stack">
-            <div>
-              <Shield size={18} />
-              <span>Private hand handles are ACL-restricted to seated wallets.</span>
-            </div>
-            <div>
-              <BadgeCheck size={18} />
-              <span>Payouts are pull-based and verified by the encrypted winner proof.</span>
-            </div>
-          </div>
-        </aside>
-      </section>
+      {route.page === "home" && renderHomePage()}
+      {route.page === "lobby" && renderLobbyPage()}
+      {route.page === "room" && renderRoomPage()}
+      {route.page === "game" && renderGamePage()}
+      {route.page === "protocol" && renderProtocolPage()}
 
       {busy && (
         <div className="busy-toast">
