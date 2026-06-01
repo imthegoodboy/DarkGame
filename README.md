@@ -1,66 +1,104 @@
 # DarkGame
 
-## Current Production MVP
+DarkGame is a privacy-first on-chain high-card game built for the Fhenix Wavehack. It uses Fhenix CoFHE so the contract can deal and compare encrypted cards while each player can decrypt only their own hand.
 
-DarkGame now includes a working CoFHE-powered MVP:
+## Live Testnet App
 
-- Solidity contract at `contracts/DarkGame.sol`
-- React/Vite frontend in `src/`
-- Hardhat deploy script in `scripts/deploy.ts`
-- CoFHE unit tests in `test/DarkGame.test.ts`
-- Sepolia deployment metadata in `deployments/11155111.json`
-- Product roadmap in `docs/ROADMAP.md`
-- Audit scope and invariants in `docs/AUDIT_SCOPE.md`
-- Production app routes for `/`, `/lobby`, `/room/:id`, `/game/:id`, and `/protocol`
-- Vercel SPA rewrites in `vercel.json` for direct room/game deep links
+- Frontend: https://darkgame-six.vercel.app
+- Network: Ethereum Sepolia, chain ID `11155111`
+- Contract: `0x8aE22979669d93B106304700B27657Fe2814Bd4a`
+- Deployment block: `10967292`
+- Deployment tx: `0xa33de378c930aaf4e9aaf590d99b09acec1f45d835439dd9f9392012cbf9182f`
+- Deployer: `0x96dAd720ec7cf5c3a0c6Cf724A18C82bfB3B2DD3`
 
-The deployed Sepolia contract is:
+The frontend is configured with `VITE_DARKGAME_ADDRESS` and `VITE_DARKGAME_START_BLOCK`, so the lobby can read indexed `GameCreated` logs from the current deployment instead of depending only on the latest table IDs.
 
-```text
-0x277Ee09e893ef98cAAE78800F9DA8C387A612Ddc
+## What Works Now
+
+- Wallet connect and Sepolia chain switching.
+- Create a buy-in table.
+- Join from a second wallet.
+- Submit encrypted shuffle entropy from both players.
+- Deal no-duplicate encrypted card handles.
+- Decrypt only your own private hand through CoFHE permits.
+- Play check, bet, call, and fold actions.
+- Enforce exact betting, turn order, and game status transitions.
+- Compute the winner over encrypted card scores.
+- Reveal only the winner code through `decryptForTx`.
+- Verify the threshold decrypt proof on-chain with `FHE.verifyDecryptResult`.
+- Settle winner or split-pot ties.
+- Recover stalled hands, turns, and reveal states through timeouts.
+- Withdraw winnings through pull payments.
+- Navigate direct routes for `/`, `/lobby`, `/room/:id`, `/game/:id`, and `/protocol`.
+
+## Wave Build Log
+
+### Wave 1 - Foundation
+
+- Created the React, TypeScript, Vite, Hardhat, Solidity, and CoFHE project scaffold.
+- Added wallet connection, chain configuration, and Sepolia-ready environment variables.
+- Built the first app shell with home, lobby, room, game, and protocol routes.
+- Added Vercel SPA rewrites so direct room and game links work in production.
+
+### Wave 2 - Core Contract
+
+- Implemented `DarkGame.sol` for two-player high-card tables.
+- Added table creation, joining, buy-in accounting, player seats, status tracking, and public game reads.
+- Added player actions for check, bet, call, and fold.
+- Moved payouts to pull withdrawals so settlement does not depend on pushing ETH during the game-ending transaction.
+
+### Wave 3 - CoFHE Privacy
+
+- Replaced plaintext card flow with encrypted card handles.
+- Added player-only ACL grants for private cards and private score handles.
+- Added CoFHE permit-based private hand viewing with `decryptForView`.
+- Added encrypted winner computation and public winner-code reveal with `decryptForTx`.
+- Added on-chain proof verification before settlement.
+
+### Wave 4 - Fairness And Safety
+
+- Removed the old public block-entropy draw path.
+- Added two-party encrypted shuffle entropy so both players contribute private draw material.
+- Bounded encrypted draw shares before card assignment.
+- Added no-duplicate card assignment for the four dealt cards.
+- Added strict invalid-action checks and exact call/bet validation.
+- Added fold settlement, hand timeout recovery, turn timeout recovery, and reveal timeout recovery.
+- Added split-pot tie handling.
+
+### Wave 5 - Product UX
+
+- Built the playable table UI with private hand area, opponent hidden cards, pot display, status chips, timers, and action dock.
+- Added room inspector panels for seats, stakes, status, deadlines, contract address, and withdrawal state.
+- Added responsive mobile layout fixes for the game table.
+- Added a richer home page with live chain status, private-table flow, and production safeguard summaries.
+- Added a favicon and browser metadata for a more finished production feel.
+
+### Final Hardening
+
+- Added event-indexed historical table reads from the deployment block.
+- Added deployment metadata with transaction hash and block number.
+- Added `docs/AUDIT_SCOPE.md` with invariants for payout, ACL, settlement, and randomness review.
+- Added GitHub Actions CI for compile, tests, build, Vercel previews, and manual Sepolia deploys.
+- Added `scripts/smoke-sepolia.ts` for full testnet smoke runs when the deployer has enough Sepolia ETH.
+- Verified the app with compile, 8 CoFHE contract tests, and production build.
+
+## Verified Locally
+
+Run the full verification suite:
+
+```bash
+npm run verify:app
 ```
 
-The deployed frontend is:
+Current suite:
 
-```text
-https://darkgame-six.vercel.app
-```
+- Hardhat compile.
+- 8 CoFHE contract tests.
+- Vite production build.
 
-Sepolia end-to-end smoke test for table #1 on the current contract:
+The tests cover create, join, encrypted shuffle submission, no-duplicate dealing, private reads, invalid actions, exact betting, winner reveal, proof-gated settlement, split-pot ties, withdrawals, fold settlement, cancel flow, hand timeout, turn timeout, and reveal timeout.
 
-```text
-Fund temporary second wallet: 0xead857bfb573ddd9fc169496daf57a3c215e30b720d05a5dbca9793e0504150c
-Create table #1: 0x6888668215d128190780e6b7ce57d974f54952251c6372b9a31e26bdf6c7ccf5
-Join table #1: 0x2b8873ac21b0066b1908e6223da63600a3bd46ad654a26c0fbe04346e91bdce7
-Alice encrypted shuffle: 0xb65d43c3673ee3f67d940c3d436be169cf7cbca8a675d0621270cd517cb58e3e
-Bob encrypted shuffle: 0x587394af081a22035d17166bf98d6279f32f384045dc3d13bed1a2ccfac10ffa
-Deal encrypted cards: 0x892619f7a68ea5e4e1706384caeb654e261b3aa844e209154b1ccd899541a2d5
-Alice check: 0x3b838283be32a9a0a10f79ef6702dca6e9ecca4e0d2859554fe18f6267c77a24
-Bob check: 0x9c1e8a6c5a8c2e9fbda1e49965f1957444dcec9794be177774e4b68c25a7a948
-Settle winner: 0xbf5aee3ad410d27ec47fc39554fee1dbec5ff8e8a168f08da373d5cf4a6febb5
-Withdraw payout: 0x9091749c2a6fc9558214aa7c7520f1b6da3ea3aaf40ef8a9215cb7be2e426a4d
-Final status: Finished
-Final pot: 0 ETH
-```
-
-### Verified Flow
-
-The current app supports:
-
-1. Connect an injected wallet.
-2. Open the landing page, lobby, room page, playable game page, or protocol page.
-3. Create a buy-in table.
-4. Join a table from a second wallet.
-5. Submit encrypted shuffle shares from both seated wallets.
-6. Deal no-duplicate encrypted card handles.
-7. Decrypt only your own private hand through the permit flow.
-8. Submit actions: check, bet, call, or fold.
-9. Compute an encrypted winner on-chain.
-10. Reveal only the winner code with `decryptForTx`.
-11. Verify the threshold decrypt proof on-chain with `FHE.verifyDecryptResult`.
-12. Settle the pot on-chain and withdraw through pull payments.
-
-### Run Locally
+## Run Locally
 
 ```bash
 npm install
@@ -68,484 +106,67 @@ npm run verify:app
 npm run dev
 ```
 
-For Sepolia, create a local env file using `.env.example` and set:
+Create `.env.local` from `.env.example`:
 
 ```bash
-VITE_DARKGAME_ADDRESS=0x277Ee09e893ef98cAAE78800F9DA8C387A612Ddc
-VITE_DARKGAME_START_BLOCK=0
+VITE_DARKGAME_ADDRESS=0x8aE22979669d93B106304700B27657Fe2814Bd4a
+VITE_DARKGAME_START_BLOCK=10967292
 VITE_DEFAULT_CHAIN_ID=11155111
+VITE_SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 ```
 
-### Production Hardening Note
+Never commit real private keys. Use throwaway testnet keys only.
 
-The current build removes the previous player-selected hand path and the old public block-entropy draw. Each seated wallet now submits CoFHE-encrypted shuffle shares generated by browser crypto, and the contract fully bounds the combined encrypted shares before dealing no-duplicate encrypted card handles. Betting is exact-value enforced, stale active games and stale reveal states can be timed out, split-pot ties are supported, and payouts use pull withdrawals. Settlement uses the public `decryptForTx` proof path.
+## Deploy Contract
 
-DarkGame is the project I am building for the Fhenix Privacy-by-Design Buildathon. It is a privacy-first on-chain high-card game where hidden information stays encrypted during gameplay instead of being exposed on a public blockchain.
-
-The first version of DarkGame is an encrypted 2-player high-card poker-style game. Each player connects a wallet, joins a table, receives private cards, sees only their own hand, makes moves from the frontend, and lets the smart contract evaluate the result without revealing secret information to everyone else on-chain.
-
-This project exists because blockchain gaming has a serious limitation: blockchains are transparent by default, but many games depend on hidden information. Poker cards, secret roles, private moves, fog-of-war, and sealed decisions cannot work properly if all state is public. DarkGame solves that by using Fully Homomorphic Encryption (FHE) on Fhenix so the game can compute on encrypted data while preserving fairness and privacy.
-
-## What DarkGame Is
-
-DarkGame is a private strategy gaming framework built on encrypted smart contracts. I am starting with poker because it is the clearest and easiest way to demonstrate the value of hidden information on-chain.
-
-In a normal blockchain game:
-
-- game state is public
-- hidden cards or roles become visible
-- players can inspect the chain and gain unfair information
-- the core gameplay loop breaks
-
-In DarkGame:
-
-- cards are encrypted before or when they enter the contract flow
-- hidden game state stays encrypted on-chain
-- only the correct player can decrypt and view their own private information
-- the contract can still enforce rules and compute outcomes
-- only the final result needs to be revealed
-
-So the main idea behind DarkGame is simple: I want to make blockchain games playable in categories that were previously impossible because of transparency.
-
-## Why This App Matters
-
-DarkGame is not just a game demo. It shows a bigger point: privacy is not a cosmetic feature in Web3, it is an architectural primitive.
-
-If hidden information cannot stay private, entire categories of applications become unusable:
-
-- poker and card games
-- mafia or werewolf style social deduction games
-- turn-based strategy games with hidden moves
-- fog-of-war multiplayer games
-- sealed-bid tournaments or wagering systems
-
-By using Fhenix, I can build a system where the blockchain still guarantees fairness, ownership, and settlement, but it does not expose the exact information that should remain secret during the game.
-
-## Problem Statement
-
-Public chains are excellent for transparency, but they are not naturally designed for games with private state.
-
-Poker is the best example:
-
-- if everyone can inspect everyone else's cards, the game is broken
-- if the dealer is centralized and trusted, the game loses its trust-minimized value
-- if hidden state is pushed fully off-chain, the on-chain logic becomes weak and hard to verify
-
-So the challenge is not only "how do I build poker on-chain?"
-
-The real challenge is:
-
-How do I build poker on-chain where:
-
-- hidden information remains private
-- game logic remains verifiable
-- the result remains fair
-- the user experience still feels natural
-
-DarkGame is my answer to that problem.
-
-## My Solution
-
-I am using Fhenix FHE to keep gameplay-critical state encrypted while still allowing smart contracts to process game logic.
-
-That means DarkGame can support:
-
-- encrypted card storage
-- encrypted comparisons and game logic
-- selective decryption for the correct player
-- public verification of the result without public exposure of the private state
-
-For the MVP, I am focusing on one very clear promise:
-
-> DarkGame enables a provably fair on-chain high-card game where players can keep their cards private while the blockchain still decides the outcome.
-
-## What The App Does
-
-At a product level, the app does the following:
-
-1. A player connects a wallet.
-2. The player creates a game room or joins an existing one.
-3. Both players lock in the buy-in or entry state.
-4. The system deals encrypted cards.
-5. Each player decrypts only their own cards on the client side with the proper permit flow.
-6. Players take actions such as check, call, bet, raise, or fold.
-7. The contract advances the game using encrypted state.
-8. The winner is computed and the result is settled on-chain.
-9. Only the final outcome is exposed by default, while secret game state remains private.
-
-This creates a game loop that feels familiar to players, but uses privacy-preserving computation underneath.
-
-## How DarkGame Works
-
-### 1. Wallet connection and identity
-
-Each player connects a wallet from the frontend. The wallet acts as the player's identity and signing layer for creating or joining a game.
-
-### 2. Game creation
-
-One player creates a new table. The game contract stores the room metadata, stake amount, participants, round status, and the encrypted game state references.
-
-### 3. Encrypted dealing
-
-The deck and dealt cards are represented in encrypted form. The contract stores encrypted values instead of plain card values.
-
-### 4. Selective card visibility
-
-A player can decrypt only their own cards through the Fhenix permit or decryption flow. The other player cannot access those cards, and spectators cannot inspect them from the chain.
-
-### 5. Player actions
-
-Players submit actions from the frontend. Some actions can remain public if the game design allows it, but the hidden information that drives the round remains encrypted.
-
-### 6. Encrypted game evaluation
-
-The contract processes the round and evaluates the winning hand or final state without exposing the secret cards themselves.
-
-### 7. Settlement
-
-The winner is declared, the game is marked complete, and rewards or pot settlement can happen on-chain.
-
-This is the core value of DarkGame: on-chain enforcement with private game state.
-
-## Best Architecture For DarkGame
-
-The best architecture for this app is a hybrid privacy-first architecture:
-
-- the smart contract layer owns trust-critical game state and settlement
-- the Fhenix encryption layer handles encrypted computation and decryption permissions
-- the frontend handles wallet interaction, game UI, and user-side decryption
-- a lightweight backend supports matchmaking, room discovery, notifications, and indexed reads
-
-I do not want the backend to become a trusted owner of secret game state. The backend should improve speed and UX, but the fairness of the game must still come from the encrypted contract system.
-
-### Why this architecture is the best fit
-
-- It keeps the core game rules trust-minimized.
-- It avoids leaking private state through a centralized API.
-- It gives me a cleaner user experience than reading every event directly from the chain.
-- It is realistic for a hackathon MVP and extensible for a production version later.
-
-## System Architecture
-
-```mermaid
-flowchart LR
-    A[Player Wallet] --> B[React / Next.js Frontend]
-    B --> C[Fhenix SDK / CoFHE React Hooks]
-    C --> D[Encrypted Poker Smart Contracts]
-    D --> E[Fhenix Encrypted Compute Layer]
-    D --> F[Event Logs]
-    F --> G[Indexer / Backend Service]
-    G --> B
-    G --> H[Room State / Matchmaking / Notifications]
+```bash
+PRIVATE_KEY=0xYOUR_TESTNET_PRIVATE_KEY npm run deploy:sepolia
 ```
 
-## Architecture Breakdown
+The deploy script writes `deployments/11155111.json` with the contract address, deployer, transaction hash, block number, and timestamp.
 
-### 1. Frontend Layer
+After deploying, update:
 
-The frontend is the player-facing application. It is responsible for:
+- `.env.local`
+- `.env.example`
+- Vercel production env `VITE_DARKGAME_ADDRESS`
+- Vercel production env `VITE_DARKGAME_START_BLOCK`
 
-- wallet connection
-- game lobby and room screens
-- poker table UI
-- player action controls
-- displaying only the right player's cards
-- calling encrypt, write, and decrypt flows through the SDK
+## Testnet Smoke
 
-The frontend should feel like a normal multiplayer card game, even though the actual game state is protected by encrypted smart contract logic underneath.
-
-### 2. Smart Contract Layer
-
-The contract layer is the heart of the protocol. It is responsible for:
-
-- game creation and joining
-- storing encrypted state
-- tracking round progression
-- validating player actions
-- computing hand logic
-- deciding the winner
-- settling funds or rewards
-
-This layer should be minimal, strict, and deterministic because it is the source of fairness.
-
-### 3. Encryption and Permission Layer
-
-This is where Fhenix becomes essential.
-
-Instead of storing plain values like:
-
-```solidity
-uint8 card = 7;
+```bash
+PRIVATE_KEY=0xDEPLOYER_KEY npm run smoke:sepolia
 ```
 
-DarkGame uses encrypted values such as:
+For the full encrypted deal smoke, the deployer must have enough Sepolia ETH because `dealHands` is gas-heavy. The script can also use a funded second wallet:
 
-```solidity
-euint8 card;
+```bash
+PRIVATE_KEY=0xDEPLOYER_KEY SECOND_PRIVATE_KEY=0xSECOND_TEST_WALLET npm run smoke:sepolia
 ```
 
-With this model, the system can:
+The smoke script creates a tiny table, funds or uses a second wallet, joins, submits encrypted entropy, deals, decrypts both private hands through the SDK, checks both turns, settles the encrypted winner, withdraws payouts, and cleans up temporary wallet funds where possible.
 
-- hold private cards in encrypted form
-- run logic on encrypted values
-- allow only the right player to decrypt their own data
-- reveal the result without revealing the underlying secrets
+## Project Structure
 
-### 4. Backend and Indexing Layer
-
-The backend is optional for the pure protocol, but it is very useful for the actual app experience.
-
-I plan to use it for:
-
-- matchmaking
-- room discovery
-- off-chain notifications
-- session presence
-- indexed event reads for faster UI loading
-- analytics and gameplay telemetry
-
-Important design rule: the backend does not need access to decrypted private cards.
-
-### 5. Data Layer
-
-For the application side, I would keep a small and practical data layer:
-
-- PostgreSQL for room metadata, user activity, and history references
-- Redis for temporary matchmaking queues and short-lived state
-- blockchain event indexing for contract-driven truth
-
-The chain remains the source of truth for trust-sensitive state. The database exists to make the product usable and responsive.
-
-## Recommended Technical Stack
-
-I am designing DarkGame around the following stack:
-
-- Frontend: Next.js, React, TypeScript
-- Wallet and chain interaction: viem
-- Privacy tooling: Fhenix CoFHE SDK and React hooks
-- Smart contracts: Solidity
-- Contract development: Hardhat
-- Backend: Node.js with Express or NestJS
-- Realtime layer: Socket.IO or WebSocket gateway
-- Data layer: PostgreSQL and Redis
-- Hosting: Vercel for frontend, cloud VM or container platform for backend services
-
-This stack is practical for a buildathon, familiar for Web3 developers, and flexible enough to grow into a production-grade system.
-
-## Smart Contract Architecture
-
-I want the contract system to be modular instead of putting everything into a single large contract.
-
-### Core contract modules
-
-#### 1. GameFactory
-
-Responsible for:
-
-- creating new game rooms
-- registering participants
-- managing game IDs
-
-#### 2. PokerTable
-
-Responsible for:
-
-- storing game state
-- tracking players
-- storing encrypted cards
-- tracking actions and rounds
-- settling the final result
-
-#### 3. HandEvaluator
-
-Responsible for:
-
-- encrypted comparison logic
-- hand ranking logic
-- deciding the winner
-
-#### 4. Treasury or Pot Manager
-
-Responsible for:
-
-- buy-in handling
-- pot accounting
-- payout settlement
-
-#### 5. Access and Permit Logic
-
-Responsible for:
-
-- selective decryption permissions
-- player-level access control to private state
-
-## Example Game State Model
-
-```solidity
-struct Game {
-    uint256 gameId;
-    address player1;
-    address player2;
-    euint8[2] player1Cards;
-    euint8[2] player2Cards;
-    euint8 pot;
-    uint8 round;
-    bool player1Folded;
-    bool player2Folded;
-    bool isStarted;
-    bool isFinished;
-    address winner;
-}
+```text
+contracts/DarkGame.sol          Encrypted game contract
+src/                            React/Vite frontend
+src/contracts/darkGameAbi.ts    Frontend ABI
+src/lib/                        Chain, card, and CoFHE helpers
+scripts/deploy.ts               Sepolia/local deploy script
+scripts/smoke-sepolia.ts        Full testnet smoke script
+test/DarkGame.test.ts           CoFHE contract tests
+deployments/11155111.json       Current Sepolia deployment metadata
+docs/AUDIT_SCOPE.md             Audit scope and invariants
+docs/ROADMAP.md                 Completed work and external gates
+vercel.json                     SPA route rewrites
 ```
 
-This model is only a conceptual structure, but it shows the direction clearly: the contract stores game-critical data, and the hidden values remain encrypted.
+## Production Notes
 
-## Core User Flow
+DarkGame is ready as a Sepolia Wavehack MVP: the contract is deployed, the frontend is wired to testnet, the app builds, and the core encrypted flow is covered by tests.
 
-### Create and join flow
+Two items remain external production gates before high-value real-money use:
 
-1. Player A connects wallet and creates a room.
-2. Player B connects wallet and joins the room.
-3. Both players lock the required buy-in.
-4. The room moves into the active state.
-
-### Gameplay flow
-
-1. The contract initializes the encrypted round state.
-2. Each player accesses only their own private cards.
-3. Players submit actions in turn.
-4. The contract validates each action and advances the round.
-5. The contract computes the final outcome.
-6. The winner is settled and the room is closed.
-
-## Privacy Model
-
-The privacy model is the most important part of DarkGame.
-
-DarkGame is designed around these principles:
-
-- private game state should never be stored in plaintext on-chain
-- only the intended player should be able to view their secret information
-- the contract should still be able to enforce game rules
-- the final result should be verifiable without exposing all hidden data
-
-This gives DarkGame a strong privacy-by-design foundation, which is exactly what the buildathon is asking teams to explore.
-
-## Trust Model
-
-The trust model I am aiming for is:
-
-- players trust the encrypted smart contract flow for rules and settlement
-- players do not need to trust each other
-- players should not need to trust the backend with their secret state
-- the backend is a UX layer, not the source of truth
-
-This is important because many "private" games become centralized once the hidden game logic moves off-chain. I want DarkGame to avoid that trap.
-
-## Randomness and Fairness
-
-A strong private game also needs strong randomness. For DarkGame, card dealing and shuffle integrity matter just as much as encryption.
-
-The current app uses a two-party encrypted shuffle-share flow: both players contribute private encrypted draw shares, the contract combines and bounds them with CoFHE operations, and only encrypted card handles are stored for each seated wallet.
-
-For a stronger high-value architecture, I would add:
-
-- encrypted range proofs for submitted shuffle shares, or native CoFHE encrypted RNG once the local mock and target network support the full path end to end
-- auditable round transitions
-- deterministic settlement logic
-
-That combination is what turns DarkGame from a demo into a truly fair privacy-preserving game system.
-
-## MVP Scope
-
-The MVP is intentionally focused so I can build and demo the core privacy value clearly.
-
-### MVP features
-
-- 2-player encrypted high-card game
-- wallet connection
-- create and join room
-- encrypted card handling
-- private card viewing for each player
-- basic betting actions
-- winner computation
-- on-chain result settlement
-
-### What I am intentionally not prioritizing in the MVP
-
-- full multi-table tournament system
-- advanced poker variants
-- complex social features
-- large-scale matchmaking
-- polished spectator mode
-
-The MVP is about proving the architecture and privacy model first.
-
-## Why This Is A Strong Buildathon Project
-
-DarkGame fits the Fhenix Privacy-by-Design Buildathon extremely well because it demonstrates a category that is naturally blocked on transparent chains.
-
-This project is strong for the program because:
-
-- it uses encrypted state as a core primitive, not as a side feature
-- it clearly demonstrates why FHE matters in an actual product
-- it is easy to explain in a demo
-- it is visual and interactive
-- it can evolve into a broader private gaming platform
-
-Most importantly, DarkGame only works properly if privacy is designed into the architecture from day one. That makes it a very natural fit for the buildathon theme.
-
-## Why People Would Use DarkGame
-
-Users would use DarkGame because it offers a combination that traditional systems usually fail to provide all at once:
-
-- fair gameplay
-- private information
-- on-chain ownership and settlement
-- reduced need to trust a centralized operator
-
-For players, this means the game feels competitive and fair.
-
-For builders, this means the architecture can later support many other hidden-information games.
-
-For the ecosystem, this shows that private state is not only useful for finance or governance. It also unlocks new kinds of entertainment and interactive protocol design.
-
-## Future Expansion
-
-Once the poker MVP works well, DarkGame can grow into a broader encrypted gaming platform.
-
-Possible next directions:
-
-- mafia or werewolf with hidden roles
-- fog-of-war strategy maps
-- private battle decisions
-- sealed-bid tournaments
-- ranked multiplayer system
-- NFT identity, badges, or rewards
-- private betting markets and tournament brackets
-
-So while poker is the entry point, the larger vision is encrypted gaming infrastructure.
-
- 
-
-## Demo Story
-
-The demo flow for judges is simple and strong:
-
-1. Two players connect their wallets.
-2. One player creates a room and the other joins.
-3. The game starts and cards are dealt in encrypted form.
-4. Each player can only view their own hand.
-5. Players submit actions.
-6. The contract computes the winner.
-7. The winner is shown without exposing all hidden information.
-
-That makes the privacy value immediately understandable.
-
-## Final Vision
-
-DarkGame is my attempt to show that privacy-first blockchain applications can be fun, practical, and technically meaningful at the same time.
-
-I am not building this just as a poker demo. I am building it as proof that encrypted state can unlock a new generation of on-chain applications where users do not have to choose between transparency, fairness, and privacy.
-
-That is why DarkGame matters, how it works, and why I believe it is worth building.
+- Native CoFHE RNG: Fhenix documents `FHE.randomEuint8()`, but the installed Hardhat mock currently reverts random tasks, so the app keeps the tested two-party encrypted shuffle-share path until local and testnet support match end to end.
+- Formal audit: payout, ACL, settlement, timeout, and randomness assumptions should be reviewed by an independent auditor before mainnet or larger-value games.
