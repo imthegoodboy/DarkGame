@@ -1,9 +1,8 @@
 {
   "contract": "DarkGame",
-  "address": "0x8330C0FFd0D4781b6EA0951C4211d8ff8bC8be0f",
+  "address": "0x8BB4Dcc8558E83DEfD4c447B0c44294d2AbA9167",
   "chainId": 11155111,
-  "deployer": "0x192baEd8d1bA5a94391DbCbe87C1A2e5f6E07C5D",
-  "transactionHash": "0x4a44a5eeff95e9f7495f4055514cd54130f84fe88513bb6ec67966d8c07dce01",
-  "blockNumber": 10968063,
-  "deployedAt": "2026-06-01T13:10:57.436Z"
+  "transactionHash": "0x885defc7e44823c37daa46a28af6f4ec010871528839412f0a461b601be03d46",
+  "blockNumber": 10968537,
+  "deployedAt": "2026-06-01T14:52:36.301Z"
 }
