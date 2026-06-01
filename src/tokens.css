@@ -1,0 +1,46 @@
+/* Hallmark · tokens: DarkGame · tone: encrypted game room · anchor hue: felt-green */
+:root {
+  --font-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --color-bg: #0d1110;
+  --color-bg-2: #141918;
+  --color-bg-3: #181311;
+  --color-text: #eef4ef;
+  --color-text-strong: #f7fff9;
+  --color-muted: #9eaaa1;
+  --color-muted-2: #c4d0c7;
+  --color-panel: #151b19;
+  --color-panel-strong: #1d2421;
+  --color-panel-deep: #111817;
+  --color-input: #0e1412;
+  --color-line: rgba(238, 244, 239, 0.12);
+  --color-green: #48d17f;
+  --color-green-strong: #16894a;
+  --color-green-soft: rgba(72, 209, 127, 0.16);
+  --color-gold: #f3c35b;
+  --color-blue: #8db4ff;
+  --color-paper: #f8f4ea;
+  --color-red: #ff6a6a;
+  --color-danger: #8b2f35;
+  --color-settle: #87651d;
+  --color-ink: #0a0d0c;
+
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 20px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  --shadow-panel: 0 20px 40px rgba(0, 0, 0, 0.28);
+  --shadow-card: 0 20px 35px rgba(0, 0, 0, 0.26);
+
+  --dur-fast: 160ms;
+  --dur-slow: 520ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}

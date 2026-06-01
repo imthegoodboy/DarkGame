@@ -10,7 +10,15 @@ import { sepolia } from "viem/chains";
 
 const BUY_IN = hre.ethers.parseEther("0.0001");
 const TEMP_WALLET_FUNDING = hre.ethers.parseEther("0.0025");
-const MIN_DEPLOYER_SMOKE_BALANCE = hre.ethers.parseEther("0.1");
+const DEPLOYER_SMOKE_GAS_UNITS =
+  21_000n + // optional temp-wallet funding
+  350_000n + // createGame
+  1_200_000n + // submitShuffleEntropy
+  10_000_000n + // dealHands
+  650_000n + // act
+  800_000n + // settleEncryptedWinner
+  150_000n + // optional withdraw
+  2_000_000n; // buffer for fee spikes and cleanup
 
 async function waitFor(txPromise: Promise<any>, label: string) {
   const tx = await txPromise;
@@ -94,6 +102,25 @@ async function cleanupOpenTables(contract: any, deployer: any) {
   }
 }
 
+async function assertDeployerCanRunSmoke(deployer: any, willFundTempWallet: boolean) {
+  const deployerAddress = await deployer.getAddress();
+  const balance = await hre.ethers.provider.getBalance(deployerAddress);
+  const feeData = await hre.ethers.provider.getFeeData();
+  const gasPrice = feeData.gasPrice ?? hre.ethers.parseUnits("2", "gwei");
+  const valueRequired = BUY_IN + (willFundTempWallet ? TEMP_WALLET_FUNDING : 0n);
+  const required = valueRequired + gasPrice * DEPLOYER_SMOKE_GAS_UNITS;
+
+  if (balance < required) {
+    throw new Error(
+      `The deployer needs about ${hre.ethers.formatEther(
+        required
+      )} Sepolia ETH for the encrypted smoke at the current gas price; balance is ${hre.ethers.formatEther(
+        balance
+      )} ETH.`
+    );
+  }
+}
+
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
   const metadataPath = path.join(process.cwd(), "deployments", "11155111.json");
@@ -116,12 +143,7 @@ async function main() {
   if (!process.env.PRIVATE_KEY) {
     throw new Error("Set PRIVATE_KEY for the deployer before running the smoke test.");
   }
-  const deployerBalance = await hre.ethers.provider.getBalance(deployer.address);
-  if (deployerBalance < MIN_DEPLOYER_SMOKE_BALANCE) {
-    throw new Error(
-      "The deployer needs at least 0.1 Sepolia ETH for the full encrypted deal smoke because dealHands is gas-heavy."
-    );
-  }
+  await assertDeployerCanRunSmoke(deployer, !secondPrivateKey);
   const aliceClient = await createSepoliaCofheClient(process.env.PRIVATE_KEY);
   const bobClient = await createSepoliaCofheClient(tempWallet.privateKey);
   let tempFunded = false;
